@@ -1,6 +1,19 @@
 import { formatTime } from './utils.js';
 import { uiLog } from './uiLogger.js';
 import { getContrastTextColors } from './buttonColorPresets.js';
+import {
+    shouldShowButtonWaveform,
+    ensureButtonWaveform,
+    updateButtonWaveformPlayhead,
+    removeButtonWaveform,
+    buildCueForWaveformDraw
+} from './cueButtonWaveform.js';
+
+function getAppConfigForWaveform() {
+    return (uiCore && typeof uiCore.getCurrentAppConfig === 'function')
+        ? uiCore.getCurrentAppConfig()
+        : {};
+}
 
 let isInitialized = false;
 let cueStore, audioController, dragDrop, uiCore; // Scoped module refs
@@ -239,6 +252,13 @@ function renderCues() {
         timeContainer.appendChild(timeTotalElem);
         timeContainer.appendChild(timeRemainingElem);
         button.appendChild(timeContainer);
+
+        const appConfig = getAppConfigForWaveform();
+        if (shouldShowButtonWaveform(cue, appConfig)) {
+            ensureButtonWaveform(button, cue, (filePath) => uiCore.getOrGenerateWaveformPeaks(filePath), appConfig);
+        } else {
+            removeButtonWaveform(button);
+        }
 
         interactiveContainer.appendChild(button);
 
@@ -935,6 +955,15 @@ function updateCueButtonTimeWithData(cueId, timeData, elements = null, isFadingI
 
     _updateButtonTimeDisplay(button, localElements, displayCurrentTimeFormatted, displayCurrentTime, displayItemDuration, displayItemDurationFormatted, displayItemRemainingTime, displayItemRemainingTimeFormatted, isFadingIn, isFadingOut, fadeTimeRemainingMs);
     applyCueBadgeState(cueId, timeData);
+
+    const appConfig = getAppConfigForWaveform();
+    if (shouldShowButtonWaveform(cueFromStore, appConfig)) {
+        const drawCue = buildCueForWaveformDraw(cueFromStore, {
+            currentTime: displayCurrentTime,
+            duration: displayItemDuration
+        });
+        updateButtonWaveformPlayhead(button, drawCue, appConfig);
+    }
 }
 
 // Helper function to update the button display (extracted from original updateCueButtonTime)

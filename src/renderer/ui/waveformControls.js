@@ -865,6 +865,13 @@ function getBottomPanelState() {
  * @param {number} seconds - Time in seconds
  * @returns {string} Formatted time string
  */
+function syncPlayheadFromPlayback(payload) {
+    WaveformCore.syncPlayheadFromPlayback(payload);
+    if (WaveformExpanded.hasExpandedWaveform()) {
+        WaveformExpanded.syncPlayheadFromPlayback(payload);
+    }
+}
+
 function formatWaveformTime(seconds) {
     return WaveformCore.formatWaveformTime(seconds);
 }
@@ -875,6 +882,7 @@ export {
     hideAndDestroyWaveform,
     getCurrentTrimTimes,
     formatWaveformTime,
+    syncPlayheadFromPlayback,
     expandBottomPanel,
     collapseBottomPanel,
     setBottomPanelSize,

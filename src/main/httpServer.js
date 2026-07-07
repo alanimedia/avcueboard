@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const { formatTimeMMSS, calculateEffectiveTrimmedDurationSec } = require('./utils/timeUtils'); // Import utilities
 const logger = require('./utils/logger');
+const { getWaveformPeaksForFile, resolveAudioFilePathForCue } = require('./waveformPeaksService');
 
 let cueManagerRef;
 let mainWindowRef; // To send messages to the renderer if needed
@@ -39,8 +40,84 @@ function cleanupIpcTriggerLocks() {
 // Run cleanup every 30 seconds
 setInterval(cleanupIpcTriggerLocks, 30000);
 
+const {
+    normalizeShowButtonWaveformOverride,
+    resolveEffectiveShowButtonWaveform
+} = require('./showButtonWaveformUtils');
+
 let configuredPort = 3000; // Default port
 let appConfigRef = null; // Reference to app config
+
+function processCueForRemote(cue, overrides = {}) {
+    let initialTrimmedDurationValueS = 0;
+    let originalKnownDurationS = 0;
+
+    if (cue.type === 'single_file') {
+        initialTrimmedDurationValueS = calculateEffectiveTrimmedDurationSec(cue);
+        originalKnownDurationS = cue.knownDuration || cue.knownDurationS || 0;
+    } else if (cue.type === 'playlist' && cue.playlistItems && cue.playlistItems.length > 0) {
+        const firstItem = cue.playlistItems[0];
+        initialTrimmedDurationValueS = calculateEffectiveTrimmedDurationSec(firstItem);
+        originalKnownDurationS = firstItem.knownDuration || 0;
+    } else {
+        initialTrimmedDurationValueS = cue.knownDuration || cue.knownDurationS || 0;
+        originalKnownDurationS = cue.knownDuration || cue.knownDurationS || 0;
+    }
+
+    const trimStartTime = cue.type === 'single_file'
+        ? (cue.trimStartTime || 0)
+        : (cue.type === 'playlist' && cue.playlistItems && cue.playlistItems.length > 0
+            ? (cue.playlistItems[0].trimStartTime || 0)
+            : 0);
+    const trimEndTime = cue.type === 'single_file'
+        ? (cue.trimEndTime || 0)
+        : (cue.type === 'playlist' && cue.playlistItems && cue.playlistItems.length > 0
+            ? (cue.playlistItems[0].trimEndTime || 0)
+            : 0);
+
+    const status = overrides.status || cue.status || 'stopped';
+    const currentTimeS = overrides.currentTimeS !== undefined ? overrides.currentTimeS : (cue.currentTimeS || 0);
+    const currentItemDurationS = overrides.currentItemDurationS !== undefined
+        ? overrides.currentItemDurationS
+        : (cue.currentItemDurationS !== undefined ? cue.currentItemDurationS : initialTrimmedDurationValueS);
+
+    return {
+        id: cue.id,
+        name: cue.name,
+        type: cue.type,
+        status,
+        currentTimeS,
+        currentItemDurationS,
+        currentItemRemainingTimeS: overrides.currentItemRemainingTimeS !== undefined
+            ? overrides.currentItemRemainingTimeS
+            : (cue.currentItemRemainingTimeS !== undefined ? cue.currentItemRemainingTimeS : initialTrimmedDurationValueS),
+        initialTrimmedDurationS: cue.initialTrimmedDurationS !== undefined ? cue.initialTrimmedDurationS : initialTrimmedDurationValueS,
+        knownDurationS: cue.knownDurationS !== undefined ? cue.knownDurationS : originalKnownDurationS,
+        playlistItemName: overrides.playlistItemName !== undefined
+            ? overrides.playlistItemName
+            : (cue.playlistItemName || ((cue.type === 'playlist' && cue.playlistItems && cue.playlistItems.length > 0) ? cue.playlistItems[0].name : null)),
+        nextPlaylistItemName: overrides.nextPlaylistItemName !== undefined ? overrides.nextPlaylistItemName : (cue.nextPlaylistItemName || null),
+        trimStartTime: overrides.trimStartTime !== undefined ? overrides.trimStartTime : trimStartTime,
+        trimEndTime: overrides.trimEndTime !== undefined ? overrides.trimEndTime : trimEndTime,
+        progressRatio: overrides.progressRatio !== undefined ? overrides.progressRatio : (cue.progressRatio || 0),
+        fileProgressRatio: overrides.fileProgressRatio !== undefined
+            ? overrides.fileProgressRatio
+            : (cue.fileProgressRatio !== undefined
+                ? cue.fileProgressRatio
+                : (trimStartTime > 0 && originalKnownDurationS > 0 ? Math.min(1, trimStartTime / originalKnownDurationS) : 0)),
+        hasWaveform: !!(cue.type === 'single_file'
+            ? cue.filePath
+            : (cue.playlistItems && cue.playlistItems.length > 0 && cue.playlistItems[0].filePath)),
+        buttonColor: cue.buttonColor || null,
+        showButtonWaveform: normalizeShowButtonWaveformOverride(cue.showButtonWaveform),
+        effectiveShowButtonWaveform: resolveEffectiveShowButtonWaveform(cue, appConfigRef || {})
+    };
+}
+
+function formatCuesForRemote(cues) {
+    if (!Array.isArray(cues)) return [];
+    return cues.map(cue => processCueForRemote(cue));
+}
 
 function initialize(cueMgr, mainWin, appConfig = null) {
     cueManagerRef = cueMgr;
@@ -62,46 +139,40 @@ function initialize(cueMgr, mainWin, appConfig = null) {
         res.sendFile(path.join(__dirname, '..', 'renderer', 'remote_control', 'remote.html'));
     });
 
+    app.get('/api/cues/:cueId/waveform-peaks', async (req, res) => {
+        try {
+            if (!cueManagerRef) {
+                return res.status(503).json({ success: false, error: 'Cue manager unavailable' });
+            }
+            const cue = cueManagerRef.getCueById(req.params.cueId);
+            if (!cue) {
+                return res.status(404).json({ success: false, error: 'Cue not found' });
+            }
+            const playlistItemName = req.query.playlistItemName || null;
+            const filePath = resolveAudioFilePathForCue(cue, playlistItemName);
+            if (!filePath) {
+                return res.status(404).json({ success: false, error: 'No audio file for cue' });
+            }
+            const peaksResult = await getWaveformPeaksForFile(filePath);
+            if (!peaksResult.success) {
+                return res.status(500).json(peaksResult);
+            }
+            res.json(peaksResult);
+        } catch (error) {
+            logger.error('HTTP_SERVER: Error serving waveform peaks:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     wss.on('connection', (ws) => {
         logger.info('HTTP_SERVER: Remote client connected via WebSocket.');
 
         // Send current cues on connection
         if (cueManagerRef) {
             const rawCues = cueManagerRef.getCues();
-            const processedCues = rawCues.map(cue => {
-                let initialTrimmedDurationValueS = 0;
-                let originalKnownDurationS = 0;
-
-                if (cue.type === 'single_file') {
-                    initialTrimmedDurationValueS = calculateEffectiveTrimmedDurationSec(cue);
-                    originalKnownDurationS = cue.knownDuration || 0;
-                } else if (cue.type === 'playlist' && cue.playlistItems && cue.playlistItems.length > 0) {
-                    // For playlists, use the effective duration of the first item for initial display
-                    // Playlist items have knownDuration, trimStartTime, trimEndTime
-                    const firstItem = cue.playlistItems[0];
-                    initialTrimmedDurationValueS = calculateEffectiveTrimmedDurationSec(firstItem);
-                    originalKnownDurationS = firstItem.knownDuration || 0;
-                } else {
-                    // Fallback for other types or empty playlists
-                    initialTrimmedDurationValueS = cue.knownDuration || 0;
-                    originalKnownDurationS = cue.knownDuration || 0;
-                }
-
-                logger.info(`HTTP_SERVER: Initial cue data for ${cue.id} (${cue.type}): trimmed=${initialTrimmedDurationValueS}s, original=${originalKnownDurationS}s`);
-
-                // Ensure all necessary fields expected by remote are present
-                return {
-                    id: cue.id,
-                    name: cue.name,
-                    type: cue.type,
-                    status: 'stopped', // Initial status, will be updated by remote_cue_update
-                    currentTimeS: 0,
-                    currentItemDurationS: initialTrimmedDurationValueS, // Use this for initial total time display
-                    initialTrimmedDurationS: initialTrimmedDurationValueS, // Explicitly for remote's logic
-                    knownDurationS: originalKnownDurationS, // Original untrimmed duration of main file/first item
-                    playlistItemName: (cue.type === 'playlist' && cue.playlistItems && cue.playlistItems.length > 0) ? cue.playlistItems[0].name : null,
-                    nextPlaylistItemName: null, // This will come from live updates
-                };
+            const processedCues = formatCuesForRemote(rawCues);
+            rawCues.forEach((cue, index) => {
+                logger.info(`HTTP_SERVER: Initial cue data for ${cue.id} (${cue.type}): trimmed=${processedCues[index].currentItemDurationS}s, original=${processedCues[index].knownDurationS}s`);
             });
             ws.send(JSON.stringify({ type: 'all_cues', payload: processedCues }));
         }
@@ -254,14 +325,18 @@ function getRemoteInfo() {
 
 // Function to update configuration (for port changes, etc.)
 function updateConfig(newConfig) {
+    const prevDefaultShowButtonWaveform = appConfigRef?.defaultShowButtonWaveform;
     appConfigRef = newConfig;
 
     // If port changed, log a warning that restart is needed
     if (newConfig.httpRemotePort && newConfig.httpRemotePort !== configuredPort) {
         logger.info(`HTTP_SERVER: Port change detected (${configuredPort} -> ${newConfig.httpRemotePort}). Server restart required for changes to take effect.`);
-        // Note: We don't restart the server automatically to avoid disrupting connections
-        // The port change will take effect on next app restart
+    }
+
+    if (newConfig.defaultShowButtonWaveform !== prevDefaultShowButtonWaveform && cueManagerRef) {
+        const cues = cueManagerRef.getCues();
+        broadcastToRemotes({ type: 'all_cues', payload: formatCuesForRemote(cues) });
     }
 }
 
-module.exports = { initialize, broadcastToRemotes, getRemoteInfo, updateConfig }; 
+module.exports = { initialize, broadcastToRemotes, formatCuesForRemote, getRemoteInfo, updateConfig }; 

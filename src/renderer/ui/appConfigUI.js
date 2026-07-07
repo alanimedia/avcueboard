@@ -50,6 +50,8 @@ let configHttpRemotePortGroup;
 let configHttpRemotePortInput;
 let configHttpRemoteLinksGroup;
 let configHttpRemoteLinksDiv;
+let configMainWaveformEnabledCheckbox;
+let configDefaultShowButtonWaveformCheckbox;
 
 // Mixer Integration Elements
 // Mixer Integration removed
@@ -133,6 +135,8 @@ function cacheDOMElements() {
     configHttpRemotePortInput = document.getElementById('configHttpRemotePort');
     configHttpRemoteLinksGroup = document.getElementById('httpRemoteLinksGroup');
     configHttpRemoteLinksDiv = document.getElementById('httpRemoteLinksDiv');
+    configMainWaveformEnabledCheckbox = document.getElementById('configMainWaveformEnabled');
+    configDefaultShowButtonWaveformCheckbox = document.getElementById('configDefaultShowButtonWaveform');
 
     // Mixer Integration removed
 
@@ -181,6 +185,25 @@ function bindEventListeners() {
     }
     if (configHttpRemotePortInput) configHttpRemotePortInput.addEventListener('change', handleAppConfigChange);
     if (configHttpRemotePortInput) configHttpRemotePortInput.addEventListener('blur', handleAppConfigChange);
+
+    if (configMainWaveformEnabledCheckbox) {
+        configMainWaveformEnabledCheckbox.addEventListener('change', () => {
+            const enabled = configMainWaveformEnabledCheckbox.checked;
+            if (window.uiModules?.mainWaveformPanel?.setPanelVisible) {
+                window.uiModules.mainWaveformPanel.setPanelVisible(enabled, false);
+            } else if (window.uiModules?.mainWaveformPanel?.applyConfig) {
+                window.uiModules.mainWaveformPanel.applyConfig({
+                    ...currentAppConfig,
+                    mainWaveformEnabled: enabled,
+                    mainWaveformHeight: currentAppConfig.mainWaveformHeight || 140
+                });
+            }
+            handleAppConfigChange();
+        });
+    }
+    if (configDefaultShowButtonWaveformCheckbox) {
+        configDefaultShowButtonWaveformCheckbox.addEventListener('change', handleAppConfigChange);
+    }
     
     // Mixer event listeners removed
 
@@ -229,6 +252,12 @@ function populateConfigSidebar(config) {
         // HTTP Remote Control Settings
         if (configHttpRemoteEnabledCheckbox) configHttpRemoteEnabledCheckbox.checked = currentAppConfig.httpRemoteEnabled !== false; // Default to true
         if (configHttpRemotePortInput) configHttpRemotePortInput.value = currentAppConfig.httpRemotePort || 3000;
+        if (configMainWaveformEnabledCheckbox) {
+            configMainWaveformEnabledCheckbox.checked = currentAppConfig.mainWaveformEnabled !== false;
+        }
+        if (configDefaultShowButtonWaveformCheckbox) {
+            configDefaultShowButtonWaveformCheckbox.checked = currentAppConfig.defaultShowButtonWaveform === true;
+        }
         
         if (configAudioOutputDeviceSelect && currentAppConfig.audioOutputDeviceId) {
             configAudioOutputDeviceSelect.value = currentAppConfig.audioOutputDeviceId;
@@ -494,6 +523,11 @@ function gatherConfigFromUI() {
         
         httpRemoteEnabled: configHttpRemoteEnabledCheckbox ? configHttpRemoteEnabledCheckbox.checked : true,
         httpRemotePort: configHttpRemotePortInput ? parseInt(configHttpRemotePortInput.value) : 3000,
+        mainWaveformEnabled: configMainWaveformEnabledCheckbox ? configMainWaveformEnabledCheckbox.checked : true,
+        mainWaveformHeight: currentAppConfig.mainWaveformHeight || 140,
+        defaultShowButtonWaveform: configDefaultShowButtonWaveformCheckbox
+            ? configDefaultShowButtonWaveformCheckbox.checked
+            : false,
         
         audioOutputDeviceId: configAudioOutputDeviceSelect ? configAudioOutputDeviceSelect.value : 'default',
         

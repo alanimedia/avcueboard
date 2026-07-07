@@ -25,6 +25,10 @@ let wfCurrentTime, wfTotalDuration, wfRemainingTime;
 let ipcRendererBindingsModule;
 let onTrimChangeCallback = null;
 
+// External playback sync (Howler -> WaveSurfer playhead)
+let lastExternalSyncRawTime = -1;
+let lastExternalSyncAt = 0;
+
 // Waveform initialization with debouncing
 let waveformInitTimeout = null;
 const WAVEFORM_INIT_DEBOUNCE_MS = 100;
@@ -490,6 +494,67 @@ function setupCoreWaveformEvents(cue, regionsPlugin, setupRegionEventsCallback, 
     console.log('WaveformCore: Event listeners setup completed');
 }
 
+function updateExternalPlaybackTimeLabels(currentTimeSec, totalDurationSec) {
+    if (wfCurrentTime) {
+        wfCurrentTime.textContent = formatWaveformTime(currentTimeSec);
+    }
+    if (wfTotalDuration) {
+        wfTotalDuration.textContent = formatWaveformTime(totalDurationSec);
+    }
+    if (wfRemainingTime) {
+        wfRemainingTime.textContent = formatWaveformTime(Math.max(0, totalDurationSec - currentTimeSec));
+    }
+}
+
+/**
+ * Sync WaveSurfer playhead from main audio playback (Howler), without starting local preview.
+ * @param {object} payload - Playback sync payload
+ */
+function syncPlayheadFromPlayback(payload) {
+    if (!wavesurferInstance) return;
+    if (wavesurferInstance.isPlaying()) return;
+
+    const {
+        currentTimeSec = 0,
+        totalDurationSec = 0,
+        status = 'stopped',
+        trimStartTime = 0,
+        filePath = null
+    } = payload;
+
+    if (filePath && currentAudioFilePath && filePath !== currentAudioFilePath) {
+        return;
+    }
+
+    const fullDuration = wavesurferInstance.getDuration();
+    if (!fullDuration || fullDuration <= 0 || isNaN(fullDuration)) {
+        return;
+    }
+
+    if (status === 'stopped') {
+        lastExternalSyncRawTime = -1;
+        const startRatio = Math.min(1, Math.max(0, (trimStartTime || 0) / fullDuration));
+        wavesurferInstance.seekTo(startRatio);
+        updateExternalPlaybackTimeLabels(0, totalDurationSec);
+        return;
+    }
+
+    if (status !== 'playing' && status !== 'paused' && status !== 'fading') {
+        return;
+    }
+
+    const rawTime = (trimStartTime || 0) + Math.max(0, currentTimeSec);
+    const now = performance.now();
+    if (Math.abs(rawTime - lastExternalSyncRawTime) < 0.03 && now - lastExternalSyncAt < 50) {
+        return;
+    }
+    lastExternalSyncRawTime = rawTime;
+    lastExternalSyncAt = now;
+
+    wavesurferInstance.seekTo(Math.min(1, Math.max(0, rawTime / fullDuration)));
+    updateExternalPlaybackTimeLabels(currentTimeSec, totalDurationSec);
+}
+
 /**
  * Sync playback time with UI elements
  * @param {number} currentTime - Current playback time
@@ -681,6 +746,7 @@ export {
     initializeWaveform,
     setupCoreWaveformEvents,
     syncPlaybackTimeWithUI,
+    syncPlayheadFromPlayback,
     updateInitialTimeDisplays,
     handlePlaybackEndReached,
     destroyWaveform,

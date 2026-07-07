@@ -36,6 +36,9 @@ const DEFAULT_CONFIG = {
   httpRemotePort: 3000, // Port for HTTP remote server
   recentWorkspaces: [], // Ensure recentWorkspaces is part of DEFAULT_CONFIG
   recentButtonColors: [], // Recently used custom cue button colors (max 8)
+  mainWaveformEnabled: true, // Show resizable waveform panel below cue grid
+  mainWaveformHeight: 140, // Height in pixels for main waveform panel
+  defaultShowButtonWaveform: false, // Default mini waveform on cue buttons; per-cue can override
 };
 
 // Function to explicitly set the directory for the config file.

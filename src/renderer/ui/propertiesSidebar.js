@@ -92,6 +92,7 @@ function initPropertiesSidebar(csModule, acModule, ipcAPI, uiCoreInterfaceRef) {
         propRetriggerBehaviorSelect: getDOMElement('propRetriggerBehaviorSelect'),
         propPlaylistPlayModeSelect: getDOMElement('propPlaylistPlayModeSelect'),
         propLoopCheckbox: getDOMElement('propLoopCheckbox'),
+        propShowButtonWaveformSelect: getDOMElement('propShowButtonWaveformSelect'),
         propShufflePlaylistCheckbox: getDOMElement('propShufflePlaylistCheckbox'),
         propRepeatOnePlaylistItemCheckbox: getDOMElement('propRepeatOnePlaylistItemCheckbox'),
         propIsDuckingTriggerCheckbox: getDOMElement('propIsDuckingTriggerCheckbox'),
@@ -132,6 +133,7 @@ function openPropertiesSidebar(cue) {
         propFadeInTimeInput: getDOMElement('propFadeInTimeInput'),
         propFadeOutTimeInput: getDOMElement('propFadeOutTimeInput'),
         propLoopCheckbox: getDOMElement('propLoopCheckbox'),
+        propShowButtonWaveformSelect: getDOMElement('propShowButtonWaveformSelect'),
         propTrimStartTimeInput: getDOMElement('propTrimStartTimeInput'),
         propTrimEndTimeInput: getDOMElement('propTrimEndTimeInput'),
         propTrimConfig: getDOMElement('propTrimConfig'),
@@ -164,6 +166,10 @@ function openPropertiesSidebar(cue) {
 
     // Show the sidebar
     showPropertiesSidebar();
+
+    if (uiCore?.showMainWaveformForCue && cue.type === 'single_file' && cue.filePath) {
+        uiCore.showMainWaveformForCue(cue);
+    }
 }
 
 function hidePropertiesSidebar() {
@@ -196,6 +202,7 @@ async function handleSaveCueProperties() {
         propFadeInTimeInput: getDOMElement('propFadeInTimeInput'),
         propFadeOutTimeInput: getDOMElement('propFadeOutTimeInput'),
         propLoopCheckbox: getDOMElement('propLoopCheckbox'),
+        propShowButtonWaveformSelect: getDOMElement('propShowButtonWaveformSelect'),
         propVolumeSlider: getDOMElement('propVolumeSlider'),
         propRetriggerBehaviorSelect: getDOMElement('propRetriggerBehaviorSelect'),
         propShufflePlaylistCheckbox: getDOMElement('propShufflePlaylistCheckbox'),

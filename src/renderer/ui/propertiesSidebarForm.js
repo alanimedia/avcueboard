@@ -129,6 +129,14 @@ function collectFormData(activePropertiesCueId, domElements, stagedPlaylistItems
             const { useDefault, color } = getButtonColorFormState();
             return useDefault ? null : color;
         })(),
+        showButtonWaveform: (() => {
+            const mode = domElements.propShowButtonWaveformSelect
+                ? domElements.propShowButtonWaveformSelect.value
+                : 'default';
+            if (mode === 'show') return true;
+            if (mode === 'hide') return false;
+            return null;
+        })(),
     };
 
     return formData;
@@ -209,6 +217,15 @@ function populateFormWithCueData(cue, domElements, setStagedPlaylistItems, rende
     if(domElements.propCueTypeSelect) domElements.propCueTypeSelect.value = cue.type || 'single_file';
 
     setButtonColorFromCue(cue);
+    if (domElements.propShowButtonWaveformSelect) {
+        if (cue.showButtonWaveform === true) {
+            domElements.propShowButtonWaveformSelect.value = 'show';
+        } else if (cue.showButtonWaveform === false) {
+            domElements.propShowButtonWaveformSelect.value = 'hide';
+        } else {
+            domElements.propShowButtonWaveformSelect.value = 'default';
+        }
+    }
     
     const isPlaylist = cue.type === 'playlist';
     if(domElements.propPlaylistConfigDiv) domElements.propPlaylistConfigDiv.style.display = isPlaylist ? 'block' : 'none';

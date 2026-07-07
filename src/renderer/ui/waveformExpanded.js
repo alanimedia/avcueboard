@@ -29,6 +29,9 @@ let wsRegions = null;
 let currentAudioFilePath = null;
 let onTrimChangeCallback = null;
 
+let lastExternalSyncRawTime = -1;
+let lastExternalSyncAt = 0;
+
 /**
  * Initialize the expanded waveform module
  * @param {object} dependencies - Object containing required modules and DOM elements
@@ -1028,6 +1031,67 @@ function syncExpandedWaveformVisuals(syncCallback) {
     }
 }
 
+function updateExternalExpandedTimeLabels(currentTimeSec, totalDurationSec) {
+    if (expandedWfCurrentTime) {
+        expandedWfCurrentTime.textContent = formatWaveformTime(currentTimeSec);
+    }
+    if (expandedWfTotalDuration) {
+        expandedWfTotalDuration.textContent = formatWaveformTime(totalDurationSec);
+    }
+    if (expandedWfRemainingTime) {
+        expandedWfRemainingTime.textContent = formatWaveformTime(Math.max(0, totalDurationSec - currentTimeSec));
+    }
+}
+
+/**
+ * Sync expanded waveform playhead from main audio playback.
+ * @param {object} payload - Playback sync payload
+ */
+function syncPlayheadFromPlayback(payload) {
+    if (!expandedWaveformInstance) return;
+    if (expandedWaveformInstance.isPlaying()) return;
+
+    const {
+        currentTimeSec = 0,
+        totalDurationSec = 0,
+        status = 'stopped',
+        trimStartTime = 0,
+        filePath = null
+    } = payload;
+
+    if (filePath && currentAudioFilePath && filePath !== currentAudioFilePath) {
+        return;
+    }
+
+    const fullDuration = expandedWaveformInstance.getDuration();
+    if (!fullDuration || fullDuration <= 0 || isNaN(fullDuration)) {
+        return;
+    }
+
+    if (status === 'stopped') {
+        lastExternalSyncRawTime = -1;
+        const startRatio = Math.min(1, Math.max(0, (trimStartTime || 0) / fullDuration));
+        expandedWaveformInstance.seekTo(startRatio);
+        updateExternalExpandedTimeLabels(0, totalDurationSec);
+        return;
+    }
+
+    if (status !== 'playing' && status !== 'paused' && status !== 'fading') {
+        return;
+    }
+
+    const rawTime = (trimStartTime || 0) + Math.max(0, currentTimeSec);
+    const now = performance.now();
+    if (Math.abs(rawTime - lastExternalSyncRawTime) < 0.03 && now - lastExternalSyncAt < 50) {
+        return;
+    }
+    lastExternalSyncRawTime = rawTime;
+    lastExternalSyncAt = now;
+
+    expandedWaveformInstance.seekTo(Math.min(1, Math.max(0, rawTime / fullDuration)));
+    updateExternalExpandedTimeLabels(currentTimeSec, totalDurationSec);
+}
+
 /**
  * Update the expanded waveform time display
  */
@@ -1390,6 +1454,7 @@ export {
     syncTrimRegions,
     syncExpandedWaveformVisuals,
     updateExpandedTimeDisplay,
+    syncPlayheadFromPlayback,
     setupWaveformSync,
     setupBidirectionalSync,
     cleanupExpandedWaveform,

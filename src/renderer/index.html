@@ -80,6 +80,17 @@
                         <input type="number" id="crossfadeTime" name="crossfadeTime" value="2000" min="100" max="10000" step="100" title="Duration for crossfading between cues when crossfade mode is enabled">
                     </div>
 
+                    <h3>Main Display</h3>
+                    <div class="form-group">
+                        <label for="configMainWaveformEnabled">Show waveform below cue grid:</label>
+                        <input type="checkbox" id="configMainWaveformEnabled" name="configMainWaveformEnabled" checked>
+                    </div>
+                    <div class="form-group">
+                        <label for="configDefaultShowButtonWaveform">Show waveform on cue buttons (default):</label>
+                        <input type="checkbox" id="configDefaultShowButtonWaveform" name="configDefaultShowButtonWaveform">
+                    </div>
+                    <p class="small-text">Drag the top edge of the waveform panel to resize it. Per-cue overrides are in Cue Properties.</p>
+
                     <h3>HTTP Remote Control</h3>
                     <div class="form-group">
                         <label for="configHttpRemoteEnabled">Enable HTTP Remote:</label>
@@ -116,6 +127,12 @@
                                 <img id="crossfadeToggleIcon" src="../../assets/icons/crossfade.png" alt="Crossfade" class="btn-icon">
                                 <span class="btn-label">XFADE</span>
                             </button>
+                            <button id="mainWaveformToolbarBtn" class="btn main-waveform-toolbar-btn main-waveform-visible" title="Hide waveform panel below cue grid">
+                                <svg class="btn-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path fill="currentColor" d="M2 12h2l2-7 3 14 3-10 2 6 2-3h2"/>
+                                </svg>
+                                <span class="btn-label">WAVE</span>
+                            </button>
                             <button id="modeToggleBtn" class="btn" title="Toggle Edit/Show Mode">
                                 <img id="modeToggleIcon" src="../../assets/icons/show_light.png" alt="Toggle Mode" class="btn-icon">
                             </button>
@@ -124,6 +141,17 @@
                 </div>
                 <div id="mainDropArea">
                     <div id="cueGridContainer"></div>
+                </div>
+                <div id="mainWaveformPanel">
+                    <div id="mainWaveformResizeHandle" class="main-waveform-resize-handle" title="Drag to resize waveform panel"></div>
+                    <div class="main-waveform-header">
+                        <span id="mainWaveformCueName">Waveform</span>
+                        <div class="main-waveform-header-right">
+                            <span id="mainWaveformTime">0:00 / 0:00</span>
+                            <button type="button" id="mainWaveformToggleBtn" class="main-waveform-close-btn" title="Hide waveform panel">&times;</button>
+                        </div>
+                    </div>
+                    <div id="mainWaveformDisplay"></div>
                 </div>
             </div>
 
@@ -155,6 +183,15 @@
                             <div class="button-color-recent-label">Recent custom</div>
                             <div id="propButtonColorRecent" class="button-color-swatches button-color-recent" aria-label="Recent custom colors"></div>
                         </div>
+                    </div>
+                    <div class="form-group" id="propShowButtonWaveformGroup">
+                        <label for="propShowButtonWaveformMode">Button waveform:</label>
+                        <select id="propShowButtonWaveformMode" name="propShowButtonWaveformMode">
+                            <option value="default">Use app default</option>
+                            <option value="show">Always show</option>
+                            <option value="hide">Always hide</option>
+                        </select>
+                        <p class="small-text">Mini waveform strip at the bottom of this cue button (Electron grid and remote).</p>
                     </div>
                     
                     <div id="propSingleFileConfig" class="form-group">

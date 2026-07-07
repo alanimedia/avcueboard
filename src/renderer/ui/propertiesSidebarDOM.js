@@ -16,6 +16,7 @@ let propPlaylistPlayModeSelect;
 let propVolumeSlider, propVolumeValueDisplay;
 let propEnableDuckingCheckbox, propDuckingLevelInput, propDuckingLevelValueSpan, propIsDuckingTriggerCheckbox;
 let propButtonColorInput, propButtonColorResetBtn;
+let propShowButtonWaveformSelect;
 
 /**
  * Cache all DOM elements for the properties sidebar
@@ -54,6 +55,7 @@ function cachePropertiesSidebarDOMElements() {
     propIsDuckingTriggerCheckbox = document.getElementById('propIsDuckingTrigger');
     propButtonColorInput = document.getElementById('propButtonColor');
     propButtonColorResetBtn = document.getElementById('propButtonColorReset');
+    propShowButtonWaveformSelect = document.getElementById('propShowButtonWaveformMode');
 
     // Set up volume slider display
     if (propVolumeSlider && propVolumeValueDisplay) {
@@ -99,7 +101,8 @@ function getDOMElement(elementName) {
         propDuckingLevelValueSpan,
         propIsDuckingTriggerCheckbox,
         propButtonColorInput,
-        propButtonColorResetBtn
+        propButtonColorResetBtn,
+        propShowButtonWaveformSelect
     };
     
     return elements[elementName];

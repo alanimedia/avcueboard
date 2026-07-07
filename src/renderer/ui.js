@@ -10,6 +10,7 @@ import * as propertiesSidebar from './ui/propertiesSidebar.js';
 import * as modals from './ui/modals.js';
 import * as appConfigUI from './ui/appConfigUI.js'; // Import new module
 import * as waveformControls from './ui/waveformControls.js'; // Ensure this is imported if used by init
+import * as mainWaveformPanel from './ui/mainWaveformPanel.js';
 
 // Module references that will be initialized
 let cueStoreModule; // Renamed for clarity, will hold the passed cueStore module
@@ -20,7 +21,9 @@ let dragDropHandlerModule; // Renamed for clarity
 let appConfigUIModuleInternal; // To hold the passed appConfigUI module
 let modalsModule; // To be initialized
 let waveformControlsModule;
+let mainWaveformPanelModule;
 let isUIModuleFullyInitialized = false; // NEW FLAG
+let lastKnownDefaultShowButtonWaveform = null;
 
 // Core DOM Elements (not managed by sub-modules yet)
 let appContainer;
@@ -74,6 +77,7 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
     dragDropHandlerModule = rcvdDragDropHandler; // Store if ui.js needs to interact with it later
     appConfigUIModuleInternal = rcvdAppConfigUI;
     waveformControlsModule = rcvdWaveformControls;
+    mainWaveformPanelModule = mainWaveformPanel;
 
     let uiModules = {}; // Declare uiModules as an object
 
@@ -84,6 +88,7 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
     uiModules.sidebars = sidebars; // Add sidebars module for config sidebar toggle
     uiModules.propertiesSidebar = propertiesSidebar;
     uiModules.waveformControls = waveformControlsModule; // Use the imported waveformControls
+    uiModules.mainWaveformPanel = mainWaveformPanelModule;
     uiModules.appConfigUI = appConfigUIModuleInternal; // Use the imported appConfigUI for its functions
 
     // Initialize App Config UI first as other modules might depend on config values
@@ -110,7 +115,8 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
         getAudioFileBuffer: electronAPIForPreload.getAudioFileBuffer,
         getOrGenerateWaveformPeaks: electronAPIForPreload.getOrGenerateWaveformPeaks,
         highlightPlayingPlaylistItem: propertiesSidebar.highlightPlayingPlaylistItemInSidebar,
-        toggleConfigSidebar: configSidebar.toggleConfigSidebar
+        toggleConfigSidebar: configSidebar.toggleConfigSidebar,
+        showMainWaveformForCue: (cue) => mainWaveformPanelModule?.showForCue?.(cue)
     };
 
     // Pass the *assigned* modules to sub-module initializers
@@ -127,6 +133,12 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
 
     propertiesSidebar.initPropertiesSidebar(cueStoreModule, audioControllerModule, actualIpcBindingsModule, uiCoreInterface);
     modalsModule.initModals(cueStoreModule, electronAPIForPreload, uiCoreInterface, waveformControlsModule);
+
+    mainWaveformPanelModule.init({
+        getAppConfig: () => appConfigUIModuleInternal?.getCurrentAppConfig?.() || {},
+        savePartialConfig: (partial) => appConfigUIModuleInternal?.savePartialAppConfiguration?.(partial),
+        getCueById: (cueId) => cueStoreModule?.getCueById?.(cueId)
+    });
     
     // Make uiModules available globally for other modules to access
     window.uiModules = uiModules;
@@ -303,11 +315,18 @@ function applyAppConfiguration(newConfig) {
     if (appConfigUIModuleInternal && typeof appConfigUIModuleInternal.populateConfigSidebar === 'function') {
         console.log('UI Core: Applying new app configuration received from main by calling populateConfigSidebar:', newConfig);
         appConfigUIModuleInternal.populateConfigSidebar(newConfig);
-        // After applying, other UI components might need to be notified or refresh if they depend on app config.
-        // For example, sidebars.js (for cue properties) gets current config when opening, so that should be fine.
-        // If any part of cueGrid depends directly on appConfig that is not passed through cue data, it might need a refresh call.
     } else {
         console.error('UI Core: appConfigUIModuleInternal.populateConfigSidebar is not available to apply new config.');
+    }
+    if (mainWaveformPanelModule && typeof mainWaveformPanelModule.applyConfig === 'function') {
+        mainWaveformPanelModule.applyConfig(newConfig);
+    }
+    const defaultShowButtonWaveform = newConfig?.defaultShowButtonWaveform === true;
+    if (lastKnownDefaultShowButtonWaveform !== defaultShowButtonWaveform) {
+        lastKnownDefaultShowButtonWaveform = defaultShowButtonWaveform;
+        if (cueGrid && typeof cueGrid.renderCues === 'function') {
+            cueGrid.renderCues();
+        }
     }
 }
 
@@ -520,6 +539,29 @@ function updateCueButtonTimeDisplay(data) {
         };
         
         cueGrid.updateCueButtonTimeWithData(cueId, timeData, null, isFadingIn, isFadingOut, fadeTimeRemainingMs);
+
+        const activeCue = cueStoreModule?.getCueById?.(cueId);
+        if (activeCue && activeCue.type !== 'playlist' && mainWaveformPanelModule?.isPanelEnabled?.()) {
+            mainWaveformPanelModule.handlePlaybackUpdate(cueId, {
+                currentTimeSec: data.currentTimeSec || 0,
+                totalDurationSec: data.totalDurationSec || 0,
+                status: data.status || 'stopped'
+            }, activeCue);
+        }
+
+        const activeCueId = propertiesSidebar.getActivePropertiesCueId?.();
+        if (activeCueId && activeCueId === cueId && waveformControlsModule) {
+            const activeCue = cueStoreModule?.getCueById?.(cueId);
+            if (activeCue && activeCue.type !== 'playlist') {
+                waveformControlsModule.syncPlayheadFromPlayback({
+                    currentTimeSec: data.currentTimeSec || 0,
+                    totalDurationSec: data.totalDurationSec || 0,
+                    status: data.status || 'stopped',
+                    trimStartTime: activeCue.trimStartTime || 0,
+                    filePath: activeCue.filePath || null
+                });
+            }
+        }
     } else {
         // console.warn('[UI_CORE_DEBUG] updateCueButtonTimeDisplay: cueId missing in data', data);
     }

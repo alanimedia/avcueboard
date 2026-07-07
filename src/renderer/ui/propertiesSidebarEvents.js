@@ -121,6 +121,12 @@ function bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDelete
         }
     });
 
+    if (domElements.propShowButtonWaveformSelect) {
+        domElements.propShowButtonWaveformSelect.addEventListener('change', () => {
+            debouncedSaveCueProperties();
+        });
+    }
+
     // Ducking trigger checkbox handler
     if (domElements.propIsDuckingTriggerCheckbox) {
         if (!domElements.propIsDuckingTriggerCheckbox.hasAttribute('data-ducking-listener-attached')) {

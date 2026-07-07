@@ -98,7 +98,10 @@ async function saveCuesToFile(silent = false) {
       }
       // Added: Broadcast to HTTP remotes
       if (httpServerInstance && typeof httpServerInstance.broadcastToRemotes === 'function') {
-        httpServerInstance.broadcastToRemotes({ type: 'all_cues', payload: cues });
+        const payload = typeof httpServerInstance.formatCuesForRemote === 'function'
+          ? httpServerInstance.formatCuesForRemote(cues)
+          : cues;
+        httpServerInstance.broadcastToRemotes({ type: 'all_cues', payload });
         logger.info('CueManager: Broadcasted all_cues to HTTP remotes.');
       }
       // Also, if not silent and mainWindowRef exists, inform the renderer that cues were updated.
@@ -304,6 +307,9 @@ async function addOrUpdateProcessedCue(cueData, workspacePath) {
     duckingLevel: cueData.duckingLevel !== undefined ? cueData.duckingLevel : 80,
     isDuckingTrigger: cueData.isDuckingTrigger !== undefined ? cueData.isDuckingTrigger : false,
     buttonColor: cueData.buttonColor || null,
+    showButtonWaveform: cueData.showButtonWaveform === true
+        ? true
+        : (cueData.showButtonWaveform === false ? false : null),
   };
 
   // Ensure playlist items have unique IDs and knownDurations if not present

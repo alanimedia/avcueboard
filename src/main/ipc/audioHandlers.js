@@ -2,13 +2,36 @@ const { ipcMain } = require('electron');
 const logger = require('../utils/logger');
 const { getAudioFileDuration } = require('../utils/audioFileUtils');
 const { calculateEffectiveTrimmedDurationSec } = require('../../common/timeUtils');
-const path = require('path');
-const { Worker } = require('worker_threads');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
+const { getWaveformPeaksForFile } = require('../waveformPeaksService');
+const {
+    normalizeShowButtonWaveformOverride,
+    resolveEffectiveShowButtonWaveform
+} = require('../showButtonWaveformUtils');
 
-function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWindow, websocketServer, httpServer }) {
-    
+let appConfigManagerRef = null;
+
+function getAppConfigForRemote() {
+    if (appConfigManagerRef && typeof appConfigManagerRef.getConfig === 'function') {
+        return appConfigManagerRef.getConfig() || {};
+    }
+    return {};
+}
+
+function getButtonWaveformFieldsForRemote(cue) {
+    const appConfig = getAppConfigForRemote();
+    return {
+        showButtonWaveform: cue ? normalizeShowButtonWaveformOverride(cue.showButtonWaveform) : null,
+        effectiveShowButtonWaveform: resolveEffectiveShowButtonWaveform(cue, appConfig),
+        hasWaveform: cue ? !!(cue.type === 'single_file'
+            ? cue.filePath
+            : (cue.playlistItems && cue.playlistItems.length > 0 && cue.playlistItems[0].filePath)) : false
+    };
+}
+
+function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWindow, websocketServer, httpServer, appConfigManager }) {
+    appConfigManagerRef = appConfigManager;
     ipcMain.handle('get-cues', async (event) => {
         logger.info("IPC_HANDLER: 'get-cues' called");
         if (cueManager && typeof cueManager.getCues === 'function') {
@@ -110,6 +133,29 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
             if (currentCue) {
                 cueTypeFromManager = currentCue.type;
             }
+            let trimStartTime = 0;
+            let trimEndTime = 0;
+            if (currentCue) {
+                if (currentCue.type === 'playlist' && payload.playlistItemName && Array.isArray(currentCue.playlistItems)) {
+                    const playlistItem = currentCue.playlistItems.find(item => item.name === payload.playlistItemName);
+                    if (playlistItem) {
+                        trimStartTime = playlistItem.trimStartTime || 0;
+                        trimEndTime = playlistItem.trimEndTime || 0;
+                    }
+                } else {
+                    trimStartTime = currentCue.trimStartTime || 0;
+                    trimEndTime = currentCue.trimEndTime || 0;
+                }
+            }
+            const fullDurationS = payload.originalKnownDuration || payload.totalDurationSec || 0;
+            const rawTimeS = trimStartTime + (payload.currentTimeSec || 0);
+            const fileProgressRatio = fullDurationS > 0
+                ? Math.min(1, Math.max(0, rawTimeS / fullDurationS))
+                : 0;
+            const progressRatio = payload.totalDurationSec > 0
+                ? Math.min(1, Math.max(0, payload.currentTimeSec / payload.totalDurationSec))
+                : 0;
+
             const remoteCueUpdate = {
                 type: 'remote_cue_update',
                 cue: {
@@ -122,7 +168,13 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
                     currentItemRemainingTimeS: payload.remainingTimeSec,
                     playlistItemName: payload.playlistItemName,
                     nextPlaylistItemName: payload.nextPlaylistItemName,
-                    knownDurationS: payload.originalKnownDuration || 0
+                    knownDurationS: payload.originalKnownDuration || 0,
+                    trimStartTime,
+                    trimEndTime,
+                    progressRatio,
+                    fileProgressRatio,
+                    buttonColor: currentCue ? (currentCue.buttonColor || null) : null,
+                    ...getButtonWaveformFieldsForRemote(currentCue)
                 }
             };
             httpServer.broadcastToRemotes(remoteCueUpdate);
@@ -247,88 +299,8 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
         }
     });
 
-    // Helper for waveform generation
-    async function generateWaveformWithRetry(audioFilePath, retryCount = 0) {
-        const waveformJsonPath = audioFilePath + '.peaks.json';
-        const maxRetries = 2;
-        logger.info(`IPC_HANDLER: 'generateWaveformWithRetry' for ${audioFilePath}, retry: ${retryCount}`);
-
-        try {
-            await fsPromises.access(waveformJsonPath);
-            const jsonData = await fsPromises.readFile(waveformJsonPath, 'utf8');
-            const parsedData = JSON.parse(jsonData);
-            if (parsedData && (parsedData.peaks || parsedData.duration)) {
-                return { success: true, ...parsedData, cached: true };
-            }
-            try { await fsPromises.unlink(waveformJsonPath); } catch (e) {}
-        } catch (error) {
-            // No cache or invalid
-        }
-
-        return new Promise((resolve, reject) => {
-            const worker = new Worker(path.join(__dirname, '../waveform-generator.js'), {
-                workerData: { audioFilePath }
-            });
-
-            const workerTimeout = setTimeout(() => {
-                worker.terminate();
-                if (retryCount < maxRetries) {
-                    setTimeout(async () => {
-                        resolve(await generateWaveformWithRetry(audioFilePath, retryCount + 1));
-                    }, Math.pow(2, retryCount) * 1000);
-                } else {
-                    resolve({ success: false, error: 'timeout', errorMessage: 'Timed out' });
-                }
-            }, 30000);
-
-            worker.on('message', async (workerResult) => {
-                clearTimeout(workerTimeout);
-                if (workerResult.error) {
-                    if (retryCount < maxRetries) {
-                        setTimeout(async () => {
-                            resolve(await generateWaveformWithRetry(audioFilePath, retryCount + 1));
-                        }, Math.pow(2, retryCount) * 1000);
-                    } else {
-                        resolve({ success: false, error: 'generation_failed', errorMessage: workerResult.error.message });
-                    }
-                    return;
-                }
-                try {
-                    await fsPromises.writeFile(waveformJsonPath, JSON.stringify(workerResult), 'utf8');
-                    resolve({ success: true, ...workerResult, cached: false });
-                } catch (e) {
-                    resolve({ success: true, ...workerResult, cached: false, saveWarning: e.message });
-                }
-            });
-
-            worker.on('error', (err) => {
-                clearTimeout(workerTimeout);
-                if (retryCount < maxRetries) {
-                    setTimeout(async () => {
-                        resolve(await generateWaveformWithRetry(audioFilePath, retryCount + 1));
-                    }, Math.pow(2, retryCount) * 1000);
-                } else {
-                    resolve({ success: false, error: 'worker_error', errorMessage: err.message });
-                }
-            });
-
-            worker.on('exit', (code) => {
-                clearTimeout(workerTimeout);
-                if (code !== 0) {
-                    if (retryCount < maxRetries) {
-                        setTimeout(async () => {
-                            resolve(await generateWaveformWithRetry(audioFilePath, retryCount + 1));
-                        }, Math.pow(2, retryCount) * 1000);
-                    } else {
-                        resolve({ success: false, error: 'worker_exit_error', errorMessage: `Exited with code ${code}` });
-                    }
-                }
-            });
-        });
-    }
-
     ipcMain.handle('get-or-generate-waveform-peaks', async (event, audioFilePath) => {
-        return await generateWaveformWithRetry(audioFilePath);
+        return await getWaveformPeaksForFile(audioFilePath);
     });
 
     // Playlist Navigation Handlers
