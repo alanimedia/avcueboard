@@ -8,6 +8,17 @@ import {
     removeButtonWaveform,
     buildCueForWaveformDraw
 } from './cueButtonWaveform.js';
+import {
+    buildLayoutFromDom,
+    createSectionBlock,
+    createAddSectionButton,
+    persistLayoutFromDom,
+    bindSectionCueDragDrop,
+    bindSectionBlockDragDrop,
+    getActiveDragWrappers,
+    insertWrappersBefore,
+    insertWrappersAfter
+} from './cueGridSections.js';
 
 function getAppConfigForWaveform() {
     return (uiCore && typeof uiCore.getCurrentAppConfig === 'function')
@@ -56,6 +67,41 @@ const DUCK_TRIGGER_ICON_PATH = '../../assets/icons/DUCKING_TRIGGER.png';
 const DUCK_ACTIVE_ICON_PATH = '../../assets/icons/DUCKED.png';
 let dragOverCueId = null;
 let cueGridContainer;
+const selectedCueIds = new Set();
+let selectionAnchorId = null;
+let deleteSelectedCuesBtn = null;
+let clearSectionDragOver = null;
+let activeDragCueIds = [];
+
+function getOrderedSelectedCueIds(primaryCueId) {
+    if (selectedCueIds.size <= 1 || !selectedCueIds.has(primaryCueId)) {
+        return [primaryCueId];
+    }
+    return getVisibleCueOrder().filter(id => selectedCueIds.has(id));
+}
+
+function markDragWrappers(cueIds, primaryCueId) {
+    cueIds.forEach(id => {
+        const button = document.querySelector(`[data-cue-id="${id}"]`);
+        const wrapper = button?.closest('.cue-wrapper');
+        if (!wrapper) return;
+        wrapper.classList.add('dragging-cue-group');
+        if (id === primaryCueId) {
+            wrapper.classList.add('dragging-cue');
+        }
+        button?.classList.add('dragging');
+    });
+}
+
+function clearDragWrappers() {
+    document.querySelectorAll('.cue-wrapper.dragging-cue-group').forEach(wrapper => {
+        wrapper.classList.remove('dragging-cue-group', 'dragging-cue');
+    });
+    document.querySelectorAll('.cue-button.dragging').forEach(button => {
+        button.classList.remove('dragging');
+    });
+    activeDragCueIds = [];
+}
 
 function applyCueButtonColor(button, buttonColor) {
     if (buttonColor) {
@@ -88,6 +134,140 @@ export function initCueGrid(cs, ac, dd, ui) {
     isInitialized = true; // Set initialization flag
     uiLog.info('CueGrid: Initialized successfully.');
     // Do not call renderCues() here; let ui.loadAndRenderCues in renderer.js handle the first render.
+}
+
+export function setDeleteSelectedButton(button) {
+    deleteSelectedCuesBtn = button;
+    updateDeleteSelectedButton();
+}
+
+function updateDeleteSelectedButton() {
+    if (!deleteSelectedCuesBtn) return;
+    const count = selectedCueIds.size;
+    const inEditMode = uiCore?.isPersistedEditMode?.() ?? (uiCore?.isEditMode?.() ?? false);
+    deleteSelectedCuesBtn.disabled = count === 0;
+    deleteSelectedCuesBtn.classList.toggle('hidden', !inEditMode);
+    deleteSelectedCuesBtn.textContent = count > 0 ? `Delete (${count})` : 'Delete Selected';
+    deleteSelectedCuesBtn.title = count > 0
+        ? `Delete ${count} selected cue${count === 1 ? '' : 's'} (Delete key)`
+        : 'Select cues with the checkbox or Ctrl/Cmd+click, then delete';
+}
+
+export function selectAllCues() {
+    if (!cueStore) return;
+    selectedCueIds.clear();
+    cueStore.getAllCues().forEach(cue => selectedCueIds.add(cue.id));
+    selectionAnchorId = cueStore.getAllCues()[0]?.id || null;
+    applySelectionToDom();
+}
+
+function applySelectionToDom() {
+    if (!cueGridContainer) return;
+    cueGridContainer.querySelectorAll('.cue-wrapper').forEach(wrapper => {
+        const button = wrapper.querySelector('.cue-button');
+        const cueId = button?.dataset.cueId;
+        const isSelected = !!cueId && selectedCueIds.has(cueId);
+        wrapper.classList.toggle('cue-selected', isSelected);
+        const checkbox = wrapper.querySelector('.cue-select-checkbox');
+        if (checkbox) checkbox.checked = isSelected;
+    });
+    updateDeleteSelectedButton();
+}
+
+export function clearCueSelection() {
+    selectedCueIds.clear();
+    selectionAnchorId = null;
+    applySelectionToDom();
+}
+
+function getVisibleCueOrder() {
+    const ids = [];
+    if (!cueGridContainer) return ids;
+    cueGridContainer.querySelectorAll('.cue-wrapper .cue-button[data-cue-id]').forEach(button => {
+        ids.push(button.dataset.cueId);
+    });
+    return ids;
+}
+
+function toggleCueSelection(cueId) {
+    if (selectedCueIds.has(cueId)) {
+        selectedCueIds.delete(cueId);
+    } else {
+        selectedCueIds.add(cueId);
+    }
+    selectionAnchorId = cueId;
+    applySelectionToDom();
+}
+
+function setSingleCueSelection(cueId) {
+    selectedCueIds.clear();
+    selectedCueIds.add(cueId);
+    selectionAnchorId = cueId;
+    applySelectionToDom();
+}
+
+function selectCueRange(fromId, toId) {
+    const order = getVisibleCueOrder();
+    const startIndex = order.indexOf(fromId);
+    const endIndex = order.indexOf(toId);
+    if (startIndex === -1 || endIndex === -1) return;
+    const [low, high] = startIndex <= endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+    for (let index = low; index <= high; index += 1) {
+        selectedCueIds.add(order[index]);
+    }
+    selectionAnchorId = toId;
+    applySelectionToDom();
+}
+
+export async function deleteSelectedCues() {
+    if (!cueStore || selectedCueIds.size === 0) return { success: false };
+
+    const ids = [...selectedCueIds];
+    const count = ids.length;
+    const noun = count === 1 ? 'cue' : 'cues';
+    if (!confirm(`Delete ${count} selected ${noun}?`)) {
+        return { success: false, cancelled: true };
+    }
+
+    if (audioController?.default) {
+        ids.forEach(cueId => {
+            if (audioController.default.isPlaying?.(cueId)) {
+                audioController.default.toggle(cueId, false, 'stop');
+            }
+        });
+    }
+
+    const activePropertiesCueId = document.getElementById('propCueId')?.value;
+    const result = await cueStore.deleteCues(ids);
+    if (result?.success) {
+        clearCueSelection();
+        if (activePropertiesCueId && ids.includes(activePropertiesCueId) && uiCore?.hidePropertiesSidebar) {
+            uiCore.hidePropertiesSidebar();
+        }
+    }
+    return result;
+}
+
+export function handleDeleteSelectedKeydown(event) {
+    if (!uiCore?.isPersistedEditMode?.()) return;
+    if (event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        selectAllCues();
+        return;
+    }
+
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (selectedCueIds.size === 0) return;
+        event.preventDefault();
+        deleteSelectedCues();
+        return;
+    }
+
+    if (event.key === 'Escape') {
+        clearCueSelection();
+    }
 }
 
 function cacheDOMElements() {
@@ -130,6 +310,29 @@ function bindEventListeners() {
                     uiLog.debug(`CueGrid: Next playlist item for cue ${cueId}`);
                     audioController.default.playlistNavigateNext(cueId);
                 }
+                return;
+            }
+
+            if (uiCore?.isPersistedEditMode?.()) {
+                if (event.target.closest('.cue-wrapper')) return;
+                if (event.target.closest('.cue-section-header')) return;
+                if (event.target.closest('.cue-section-add-btn')) return;
+                clearCueSelection();
+            }
+        });
+
+        clearSectionDragOver = bindSectionCueDragDrop(cueGridContainer, {
+            canAcceptDrop: () => uiCore?.isPersistedEditMode?.() ?? false,
+            onCueDropped: async () => {
+                clearDragWrappers();
+                await persistLayoutFromDom(cueGridContainer, cueStore);
+            }
+        });
+
+        bindSectionBlockDragDrop(cueGridContainer, {
+            canAcceptDrag: () => uiCore?.isPersistedEditMode?.() ?? false,
+            onSectionReordered: async () => {
+                await persistLayoutFromDom(cueGridContainer, cueStore);
             }
         });
     }
@@ -150,30 +353,38 @@ function renderCues() {
     cueMeterLiveSources.clear();
     cueBadgeElements = {};
     const cues = cueStore.getAllCues();
+    const sections = cueStore.getSections ? cueStore.getSections() : [];
+    const layout = cueStore.getLayout ? cueStore.getLayout() : [];
+    const validCueIds = new Set(cues.map(cue => cue.id));
+    selectedCueIds.forEach(id => {
+        if (!validCueIds.has(id)) selectedCueIds.delete(id);
+    });
+    const isEditModeActive = uiCore?.isPersistedEditMode?.() ?? false;
+    const cueMap = new Map(cues.map(cue => [cue.id, cue]));
 
-    // Check if there are no cues and show empty state message
-    if (!cues || cues.length === 0) {
-        const emptyStateMessage = document.createElement('div');
-        emptyStateMessage.className = 'empty-state-message';
-        emptyStateMessage.innerHTML = `
-            <div class="empty-state-content">
-                <h3>No cues yet</h3>
-                <p>Drag and drop audio files here to create cues</p>
-            </div>
-        `;
-        cueGridContainer.appendChild(emptyStateMessage);
-        
-        // Still initialize drag drop for the empty container
-        if (dragDrop && typeof dragDrop.initializeCueButtonDragDrop === 'function') {
-            dragDrop.initializeCueButtonDragDrop(cueGridContainer);
-        }
-        return;
-    }
-
-    cues.forEach(cue => {
-        // Create a wrapper for the cue button and navigation controls
+    function appendCueCard(cue, parentContainer) {
         const cueWrapper = document.createElement('div');
         cueWrapper.className = 'cue-wrapper';
+
+        if (isEditModeActive) {
+            const selectCheckbox = document.createElement('input');
+            selectCheckbox.type = 'checkbox';
+            selectCheckbox.className = 'cue-select-checkbox';
+            selectCheckbox.checked = selectedCueIds.has(cue.id);
+            selectCheckbox.title = 'Select cue';
+            selectCheckbox.addEventListener('click', (event) => event.stopPropagation());
+            selectCheckbox.addEventListener('change', (event) => {
+                event.stopPropagation();
+                if (selectCheckbox.checked) {
+                    selectedCueIds.add(cue.id);
+                    selectionAnchorId = cue.id;
+                } else {
+                    selectedCueIds.delete(cue.id);
+                }
+                applySelectionToDom();
+            });
+            cueWrapper.appendChild(selectCheckbox);
+        }
 
         const interactiveContainer = document.createElement('div');
         interactiveContainer.className = 'cue-interactive-container';
@@ -311,7 +522,7 @@ function renderCues() {
         }
         
         // Append the wrapper to the DOM (contains both button and navigation)
-        cueGridContainer.appendChild(cueWrapper);
+        parentContainer.appendChild(cueWrapper);
 
         const elementsForTimeUpdate = {
             current: timeCurrentElem,
@@ -328,242 +539,173 @@ function renderCues() {
 
         button.addEventListener('click', (event) => handleCueButtonClick(event, cue));
 
-        // Add drag and drop for reordering in edit mode
-        if (uiCore && uiCore.isEditMode && uiCore.isEditMode()) {
-            button.draggable = true;
-            button.classList.add('draggable-cue');
-            
-            button.addEventListener('dragstart', (e) => {
-                if (!uiCore.isEditMode()) return;
+        // Drag reordering in persisted edit mode (wrapper-level drag avoids button conflicts)
+        if (isEditModeActive) {
+            cueWrapper.draggable = true;
+            cueWrapper.classList.add('draggable-cue-wrapper');
+
+            cueWrapper.addEventListener('dragstart', (e) => {
+                if (!uiCore.isPersistedEditMode?.()) return;
+                if (e.target.closest('.cue-select-checkbox, .playlist-nav-btn')) {
+                    e.preventDefault();
+                    return;
+                }
+                activeDragCueIds = getOrderedSelectedCueIds(cue.id);
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('text/plain', cue.id);
-                const wrapper = button.closest('.cue-wrapper');
-                if (wrapper) {
-                    wrapper.classList.add('dragging-cue');
-                }
-                button.classList.add('dragging');
+                e.dataTransfer.setData('application/x-accompaniment-cue-ids', activeDragCueIds.join(','));
+                markDragWrappers(activeDragCueIds, cue.id);
                 cueGridContainer.classList.add('drag-active');
             });
 
-            button.addEventListener('dragend', (e) => {
-                const wrapper = button.closest('.cue-wrapper');
-                if (wrapper) {
-                    wrapper.classList.remove('dragging-cue');
-                }
-                button.classList.remove('dragging');
+            cueWrapper.addEventListener('dragend', () => {
+                clearDragWrappers();
                 cueGridContainer.classList.remove('drag-active');
-                // Remove all drag indicators
+                if (typeof clearSectionDragOver === 'function') {
+                    clearSectionDragOver();
+                }
                 document.querySelectorAll('.drag-insert-before, .drag-insert-after').forEach(el => {
                     el.classList.remove('drag-insert-before', 'drag-insert-after');
                 });
             });
 
-            // Handle dragover on the wrapper to show insertion point
-            const wrapper = button.closest('.cue-wrapper');
-            if (wrapper) {
-                wrapper.addEventListener('dragover', (e) => {
-                    if (!uiCore.isEditMode()) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    
-                    // Check if there's a cue being dragged (look for dragging-cue class)
-                    const draggedWrapper = document.querySelector('.cue-wrapper.dragging-cue');
-                    if (!draggedWrapper || draggedWrapper === wrapper) return;
-                    
-                    // Clear previous indicators
-                    document.querySelectorAll('.drag-insert-before, .drag-insert-after').forEach(el => {
-                        el.classList.remove('drag-insert-before', 'drag-insert-after');
-                    });
-                    
-                    // Determine if we should insert before or after this element
-                    // For horizontal grid layout, use x coordinate instead of y
-                    const rect = wrapper.getBoundingClientRect();
-                    const x = e.clientX;
-                    const midpoint = rect.left + rect.width / 2;
-                    
-                    if (x < midpoint) {
-                        // Insert before this element (to the left)
-                        wrapper.classList.add('drag-insert-before');
-                    } else {
-                        // Insert after this element (to the right)
-                        wrapper.classList.add('drag-insert-after');
-                    }
+            cueWrapper.addEventListener('dragover', (e) => {
+                if (!uiCore.isPersistedEditMode?.()) return;
+                if (cueWrapper.classList.contains('dragging-cue-group')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = 'move';
+
+                const draggedWrappers = getActiveDragWrappers(cueGridContainer);
+                if (draggedWrappers.length === 0 || draggedWrappers.includes(cueWrapper)) return;
+
+                document.querySelectorAll('.drag-insert-before, .drag-insert-after').forEach(el => {
+                    el.classList.remove('drag-insert-before', 'drag-insert-after');
                 });
 
-                wrapper.addEventListener('dragleave', (e) => {
-                    // Only remove if we're actually leaving the wrapper (not just entering a child)
-                    const rect = wrapper.getBoundingClientRect();
-                    const x = e.clientX;
-                    const y = e.clientY;
-                    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-                        wrapper.classList.remove('drag-insert-before', 'drag-insert-after');
-                    }
-                });
+                const rect = cueWrapper.getBoundingClientRect();
+                if (e.clientX < rect.left + rect.width / 2) {
+                    cueWrapper.classList.add('drag-insert-before');
+                } else {
+                    cueWrapper.classList.add('drag-insert-after');
+                }
+            });
 
-                wrapper.addEventListener('drop', async (e) => {
-                    if (!uiCore.isEditMode()) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    
-                    const draggedCueId = e.dataTransfer.getData('text/plain');
-                    const draggedButton = document.querySelector(`[data-cue-id="${draggedCueId}"]`);
-                    if (!draggedButton || draggedButton === button) {
-                        wrapper.classList.remove('drag-insert-before', 'drag-insert-after');
-                        return;
+            cueWrapper.addEventListener('dragleave', (e) => {
+                const rect = cueWrapper.getBoundingClientRect();
+                const x = e.clientX;
+                const y = e.clientY;
+                if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+                    cueWrapper.classList.remove('drag-insert-before', 'drag-insert-after');
+                }
+            });
+
+            cueWrapper.addEventListener('drop', async (e) => {
+                if (!uiCore.isPersistedEditMode?.()) return;
+                e.preventDefault();
+                e.stopPropagation();
+
+                const draggedWrappers = getActiveDragWrappers(cueGridContainer, e.dataTransfer);
+                if (draggedWrappers.length === 0 || draggedWrappers.includes(cueWrapper)) {
+                    cueWrapper.classList.remove('drag-insert-before', 'drag-insert-after');
+                    return;
+                }
+
+                let insertBefore = cueWrapper.classList.contains('drag-insert-before');
+                if (!cueWrapper.classList.contains('drag-insert-before') && !cueWrapper.classList.contains('drag-insert-after')) {
+                    const rect = cueWrapper.getBoundingClientRect();
+                    insertBefore = e.clientX < rect.left + rect.width / 2;
+                }
+
+                const dropParent = cueWrapper.parentElement || cueGridContainer;
+                if (insertBefore) {
+                    insertWrappersBefore(dropParent, draggedWrappers, cueWrapper);
+                } else {
+                    insertWrappersAfter(dropParent, draggedWrappers, cueWrapper);
+                }
+
+                cueWrapper.classList.remove('drag-insert-before', 'drag-insert-after');
+                clearDragWrappers();
+                await persistLayoutFromDom(cueGridContainer, cueStore);
+            });
+        }
+    }
+
+    const layoutEntries = layout.length > 0
+        ? layout
+        : (sections.length > 0
+            ? [
+                { type: 'section', sectionId: sections[0].id },
+                ...cues.map(cue => ({ type: 'cue', cueId: cue.id, sectionId: sections[0].id }))
+            ]
+            : cues.map(cue => ({ type: 'cue', cueId: cue.id })));
+
+    if (sections.length === 0 && cues.length === 0) {
+        const emptyStateMessage = document.createElement('div');
+        emptyStateMessage.className = 'empty-state-message';
+        emptyStateMessage.innerHTML = `
+            <div class="empty-state-content">
+                <h3>No cues yet</h3>
+                <p>Drag and drop audio files here to create cues</p>
+            </div>
+        `;
+        cueGridContainer.appendChild(emptyStateMessage);
+        return;
+    }
+
+    const sectionBodies = new Map();
+    let flatFallbackContainer = null;
+
+    layoutEntries.forEach(entry => {
+        if (entry.type === 'section') {
+            const section = sections.find(item => item.id === entry.sectionId);
+            if (!section) return;
+            const block = createSectionBlock(section, {
+                isEditMode: isEditModeActive,
+                gridContainer: cueGridContainer,
+                onToggleCollapse: async (sectionId, collapsed) => {
+                    if (cueStore.updateSection) {
+                        await cueStore.updateSection(sectionId, { collapsed });
                     }
-                    
-                    const draggedWrapper = draggedButton.closest('.cue-wrapper');
-                    if (!draggedWrapper || draggedWrapper === wrapper) {
-                        wrapper.classList.remove('drag-insert-before', 'drag-insert-after');
-                        return;
+                },
+                onRename: async (sectionId, title) => {
+                    if (cueStore.updateSection) {
+                        await cueStore.updateSection(sectionId, { title });
                     }
-                    
-                    // Determine insertion position based on which class is active
-                    let insertBefore = false;
-                    if (wrapper.classList.contains('drag-insert-before')) {
-                        insertBefore = true;
-                    } else if (wrapper.classList.contains('drag-insert-after')) {
-                        insertBefore = false;
-                    } else {
-                        // Fallback: use midpoint with x coordinate for horizontal grid
-                        const rect = wrapper.getBoundingClientRect();
-                        const x = e.clientX;
-                        const midpoint = rect.left + rect.width / 2;
-                        insertBefore = x < midpoint;
+                },
+                onDelete: async (sectionId) => {
+                    if (sections.length <= 1) return;
+                    if (cueStore.deleteSection) {
+                        await cueStore.deleteSection(sectionId);
                     }
-                    
-                    // Remove dragged element from its current position first
-                    draggedWrapper.remove();
-                    
-                    // Insert at the correct position
-                    if (insertBefore) {
-                        cueGridContainer.insertBefore(draggedWrapper, wrapper);
-                    } else {
-                        // Insert after - need to get next sibling
-                        const nextSibling = wrapper.nextSibling;
-                        if (nextSibling) {
-                            cueGridContainer.insertBefore(draggedWrapper, nextSibling);
-                        } else {
-                            cueGridContainer.appendChild(draggedWrapper);
-                        }
-                    }
-                    
-                    // Clear visual indicators
-                    wrapper.classList.remove('drag-insert-before', 'drag-insert-after');
-                    
-                    // Get all cues in current DOM order and save
-                    const allCueWrappers = Array.from(cueGridContainer.querySelectorAll('.cue-wrapper'));
-                    const newOrder = allCueWrappers.map(w => {
-                        const btn = w.querySelector('.cue-button');
-                        return btn ? btn.dataset.cueId : null;
-                    }).filter(id => id !== null);
-                    
-                    // Reorder cues in cueStore
-                    if (cueStore && typeof cueStore.reorderCues === 'function') {
-                        await cueStore.reorderCues(newOrder);
-                    } else if (cueStore && typeof cueStore.saveReorderedCues === 'function') {
-                        // Fallback: manually reorder and save
-                        const allCues = cueStore.getAllCues();
-                        const reorderedCues = newOrder.map(cueId => 
-                            allCues.find(c => c.id === cueId)
-                        ).filter(c => c !== undefined);
-                        
-                        await cueStore.saveReorderedCues(reorderedCues);
-                    }
-                });
-            }
+                }
+            });
+            cueGridContainer.appendChild(block);
+            const body = block.querySelector('.cue-section-body');
+            if (body) sectionBodies.set(section.id, body);
+            return;
+        }
+        if (entry.type === 'cue') {
+            const cue = cueMap.get(entry.cueId);
+            if (!cue) return;
+            const body = sectionBodies.get(entry.sectionId) || flatFallbackContainer || cueGridContainer;
+            appendCueCard(cue, body);
         }
     });
 
-    // Add drag and drop handlers to the container itself for handling drops at the very beginning
-    if (uiCore && uiCore.isEditMode && uiCore.isEditMode()) {
-        cueGridContainer.addEventListener('dragover', (e) => {
-            if (!uiCore.isEditMode()) return;
-            
-            // Only handle if dragging over empty space (not a cue wrapper)
-            if (e.target === cueGridContainer || e.target.classList.contains('empty-state-message') || e.target.closest('.empty-state-message')) {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                
-                // Check if there's a cue being dragged
-                const draggedWrapper = document.querySelector('.cue-wrapper.dragging-cue');
-                if (!draggedWrapper) return;
-                
-                // Clear any existing indicators
-                document.querySelectorAll('.drag-insert-before, .drag-insert-after').forEach(el => {
-                    el.classList.remove('drag-insert-before', 'drag-insert-after');
-                });
-                
-                // Find the first cue wrapper to insert before
-                const firstWrapper = cueGridContainer.querySelector('.cue-wrapper:not(.dragging-cue)');
-                if (firstWrapper) {
-                    firstWrapper.classList.add('drag-insert-before');
-                }
+    if (isEditModeActive) {
+        cueGridContainer.appendChild(createAddSectionButton(async () => {
+            if (cueStore.addSection) {
+                await cueStore.addSection('New Section');
             }
-        });
-
-        cueGridContainer.addEventListener('drop', async (e) => {
-            if (!uiCore.isEditMode()) return;
-            
-            // Only handle if dropping on empty space
-            if (e.target !== cueGridContainer && !e.target.classList.contains('empty-state-message')) {
-                return; // Let the wrapper handle it
-            }
-            
-            e.preventDefault();
-            e.stopPropagation();
-            
-            const draggedCueId = e.dataTransfer.getData('text/plain');
-            if (!draggedCueId) return;
-            
-            const draggedButton = document.querySelector(`[data-cue-id="${draggedCueId}"]`);
-            if (!draggedButton) return;
-            
-            const draggedWrapper = draggedButton.closest('.cue-wrapper');
-            if (!draggedWrapper) return;
-            
-            // Get the first wrapper to insert before
-            const firstWrapper = cueGridContainer.querySelector('.cue-wrapper:not(.dragging-cue)');
-            
-            // Remove dragged element from current position
-            draggedWrapper.remove();
-            
-            // Insert at the beginning
-            if (firstWrapper) {
-                cueGridContainer.insertBefore(draggedWrapper, firstWrapper);
-            } else {
-                cueGridContainer.appendChild(draggedWrapper);
-            }
-            
-            // Clear visual indicators
-            document.querySelectorAll('.drag-insert-before, .drag-insert-after').forEach(el => {
-                el.classList.remove('drag-insert-before', 'drag-insert-after');
-            });
-            
-            // Get all cues in current DOM order and save
-            const allCueWrappers = Array.from(cueGridContainer.querySelectorAll('.cue-wrapper'));
-            const newOrder = allCueWrappers.map(w => {
-                const btn = w.querySelector('.cue-button');
-                return btn ? btn.dataset.cueId : null;
-            }).filter(id => id !== null);
-            
-            // Reorder cues in cueStore
-            if (cueStore && typeof cueStore.reorderCues === 'function') {
-                await cueStore.reorderCues(newOrder);
-            } else if (cueStore && typeof cueStore.saveReorderedCues === 'function') {
-                const allCues = cueStore.getAllCues();
-                const reorderedCues = newOrder.map(cueId => 
-                    allCues.find(c => c.id === cueId)
-                ).filter(c => c !== undefined);
-                
-                await cueStore.saveReorderedCues(reorderedCues);
-            }
-        });
+        }));
     }
 
     if (dragDrop && typeof dragDrop.initializeCueButtonDragDrop === 'function') {
         dragDrop.initializeCueButtonDragDrop(cueGridContainer);
     }
+
+    applySelectionToDom();
 }
 
 function getDragAfterElement(container, y) {
@@ -591,12 +733,20 @@ function handleCueButtonClick(event, cue) {
         return;
     }
 
-    // If the effective mode (which considers the shift key via uiCore.isEditMode()) is 'edit',
-    // then open properties. Otherwise, toggle the cue.
-    if (uiCore.isEditMode()) { 
+    // Persisted edit: properties / multi-select. Shift temporarily switches to show/playback mode.
+    if (uiCore.isEditMode()) {
+        const isMultiSelect = event.ctrlKey || event.metaKey;
+
+        if (isMultiSelect) {
+            event.preventDefault();
+            toggleCueSelection(cue.id);
+            return;
+        }
+
+        setSingleCueSelection(cue.id);
         uiLog.debug(`UI: Edit mode click on cue ${cue.id}. Opening properties.`);
         uiCore.openPropertiesSidebar(cue);
-    } else { 
+    } else {
         const retriggerBehavior = cue.retriggerBehavior || uiCore.getCurrentAppConfig().defaultRetriggerBehavior || 'restart';
         uiLog.debug(`UI: Show mode action for cue ${cue.id}. Using retrigger behavior: ${retriggerBehavior}`);
         audioController.default.toggle(cue.id, false, retriggerBehavior);

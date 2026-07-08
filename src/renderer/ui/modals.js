@@ -21,7 +21,8 @@ let modalAddAsPlaylistCueBtn;
 let modalCancelMultipleFilesDropBtn;
 
 // --- State for Modals ---
-let droppedFilesList = null; // For the multiple files drop modal
+let droppedFilesList = null;
+let droppedSectionId = null;
 let modalWaveformInstance = null; // For modal waveform instance
 
 function initModals(cs, ipc, core, waveformControls) {
@@ -237,19 +238,21 @@ async function handleSaveNewCueFromModal() {
 }
 
 
-function showMultipleFilesDropModal(files) {
+function showMultipleFilesDropModal(files, sectionId = null) {
     if (!multipleFilesDropModal) {
         console.error("Modals: multipleFilesDropModal element not found.");
         return;
     }
-    droppedFilesList = files; // Store the FileList object
+    droppedFilesList = files;
+    droppedSectionId = sectionId || null;
     multipleFilesDropModal.style.display = 'flex';
 }
 
 function hideMultipleFilesDropModal() {
     if (!multipleFilesDropModal) return;
     multipleFilesDropModal.style.display = 'none';
-    droppedFilesList = null; // Clear the stored files
+    droppedFilesList = null;
+    droppedSectionId = null;
 }
 
 async function handleAddFilesAsSeparateCues() {
@@ -275,7 +278,7 @@ async function handleAddFilesAsSeparateCues() {
                 trimStartTime: null,
                 trimEndTime: null
             };
-            await cueStore.addOrUpdateCue(newCueData);
+            await cueStore.addOrUpdateCue(newCueData, droppedSectionId ? { sectionId: droppedSectionId } : null);
         }
     } catch (error) {
         console.error('Modals: Error creating separate cues from drop:', error);
@@ -316,7 +319,7 @@ async function handleAddFilesAsPlaylistCue() {
             retriggerBehavior: currentAppConfig.defaultRetriggerBehavior
         };
 
-        await cueStore.addOrUpdateCue(newCueData);
+        await cueStore.addOrUpdateCue(newCueData, droppedSectionId ? { sectionId: droppedSectionId } : null);
         hideMultipleFilesDropModal();
     } catch (error) {
         console.error('Modals: Error adding files as playlist cue:', error);

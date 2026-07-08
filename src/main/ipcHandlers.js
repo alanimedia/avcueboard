@@ -270,7 +270,7 @@ function initialize(application, mainWin, cueMgrModule, appCfgManager, wsMgr, ws
                 if (workspaceManagerRef) workspaceManagerRef.markWorkspaceAsEdited();
                 if (mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
                     console.log(`IPC_HANDLER: 'delete-cue' - Cue ${cueId} deleted. Sending updated cue list to renderer.`);
-                    mainWindowRef.webContents.send('cues-updated-from-main', cueManagerRef.getCues());
+                    mainWindowRef.webContents.send('cues-updated-from-main', cueManagerRef.getWorkspaceSnapshot());
                 }
                 return { success: true };
             } else {
@@ -335,7 +335,7 @@ function initialize(application, mainWin, cueMgrModule, appCfgManager, wsMgr, ws
             const processedCue = await cueManagerRef.addOrUpdateProcessedCue(cueData);
             if (mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
                  console.log('IPC Handlers: Sending cues-updated-from-main after add-or-update-cue.');
-                 mainWindowRef.webContents.send('cues-updated-from-main', cueManagerRef.getCues());
+                 mainWindowRef.webContents.send('cues-updated-from-main', cueManagerRef.getWorkspaceSnapshot());
             }
 
             // Mixer integration logic removed as per requirements

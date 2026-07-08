@@ -38,7 +38,7 @@ async function initialize(appConfManager, cManager, mainWin) {
                     cueManager.setCuesDirectory(app.getPath('userData'));
                     await cueManager.resetCues();
                     if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-                        mainWindow.webContents.send('cues-updated-from-main', cueManager.getCues());
+                        mainWindow.webContents.send('cues-updated-from-main', cueManager.getWorkspaceSnapshot());
                         mainWindow.webContents.send('app-config-updated-from-main', appConfigManager.getConfig());
                     }
                 }
@@ -56,7 +56,7 @@ async function initialize(appConfManager, cManager, mainWin) {
         cueManager.setCuesDirectory(path.dirname(currentCuesPath));
         await cueManager.loadCuesFromFile(); // Load or initialize default cues
         if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-            mainWindow.webContents.send('cues-updated-from-main', cueManager.getCues());
+            mainWindow.webContents.send('cues-updated-from-main', cueManager.getWorkspaceSnapshot());
         }
     }
 }
@@ -100,7 +100,7 @@ async function newWorkspace() {
 
         logger.info('[WorkspaceManager newWorkspace] Workspace state reset.');
         if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-            mainWindow.webContents.send('cues-updated-from-main', cueManager.getCues());
+            mainWindow.webContents.send('cues-updated-from-main', cueManager.getWorkspaceSnapshot());
             mainWindow.webContents.send('app-config-updated-from-main', globalUpdateResult.config);
         }
         return true;
@@ -293,7 +293,7 @@ async function saveWorkspaceAs() {
                 }
                 mainWindow.setDocumentEdited(false);
                 if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-                    mainWindow.webContents.send('cues-updated-from-main', cueManager.getCues());
+                    mainWindow.webContents.send('cues-updated-from-main', cueManager.getWorkspaceSnapshot());
                     mainWindow.webContents.send('app-config-updated-from-main', workspaceSaveResult.config);
                 }
             }

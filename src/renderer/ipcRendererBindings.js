@@ -82,6 +82,26 @@ async function saveReorderedCues(reorderedCues) {
     return electronAPIInstance.invoke('save-reordered-cues', reorderedCues);
 }
 
+async function saveWorkspaceLayout(payload) {
+    if (!electronAPIInstance) throw new Error("electronAPIInstance not available for save-workspace-layout");
+    return electronAPIInstance.invoke('save-workspace-layout', payload);
+}
+
+async function addCueSection(title, afterSectionId = null) {
+    if (!electronAPIInstance) throw new Error("electronAPIInstance not available for add-cue-section");
+    return electronAPIInstance.invoke('add-cue-section', { title, afterSectionId });
+}
+
+async function updateCueSection(sectionId, patch) {
+    if (!electronAPIInstance) throw new Error("electronAPIInstance not available for update-cue-section");
+    return electronAPIInstance.invoke('update-cue-section', { sectionId, patch });
+}
+
+async function deleteCueSection(sectionId) {
+    if (!electronAPIInstance) throw new Error("electronAPIInstance not available for delete-cue-section");
+    return electronAPIInstance.invoke('delete-cue-section', { sectionId });
+}
+
 async function generateUUID() {
     if (!electronAPIInstance) {
         console.error("electronAPIInstance not available for UUID generation, falling back.");
@@ -145,6 +165,12 @@ async function deleteCue(cueId) {
     if (!electronAPIInstance) throw new Error("electronAPIInstance not available for delete-cue");
     console.log(`IPC Binding: Sending delete-cue for cue ID: ${cueId}`);
     return electronAPIInstance.invoke('delete-cue', cueId);
+}
+
+async function deleteCues(cueIds) {
+    if (!electronAPIInstance) throw new Error("electronAPIInstance not available for delete-cues");
+    console.log(`IPC Binding: Sending delete-cues for ${Array.isArray(cueIds) ? cueIds.length : 0} cue(s)`);
+    return electronAPIInstance.invoke('delete-cues', cueIds);
 }
 
 // New function to send discovered duration to the main process
@@ -373,6 +399,10 @@ export {
     getCuesFromMain,
     saveCuesToMain,
     saveReorderedCues,
+    saveWorkspaceLayout,
+    addCueSection,
+    updateCueSection,
+    deleteCueSection,
     generateUUID,
     sendCueStatusUpdate,
     getAppConfig,
@@ -381,6 +411,7 @@ export {
     getHttpRemoteInfo,
     addOrUpdateCue,
     deleteCue,
+    deleteCues,
     sendCueDurationUpdate,
     getAudioFileBuffer,
     getOrGenerateWaveformPeaks,

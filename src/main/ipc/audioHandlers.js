@@ -34,13 +34,16 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
     appConfigManagerRef = appConfigManager;
     ipcMain.handle('get-cues', async (event) => {
         logger.info("IPC_HANDLER: 'get-cues' called");
+        if (cueManager && typeof cueManager.getWorkspaceSnapshot === 'function') {
+            const workspace = cueManager.getWorkspaceSnapshot();
+            logger.info(`IPC_HANDLER: 'get-cues' - Returning ${workspace.cues.length} cues with ${workspace.sections.length} sections.`);
+            return workspace;
+        }
         if (cueManager && typeof cueManager.getCues === 'function') {
-            const currentCues = cueManager.getCues();
-            logger.info(`IPC_HANDLER: 'get-cues' - Returning ${currentCues.length} cues.`);
-            return currentCues;
+            return { version: 2, cues: cueManager.getCues(), sections: [], layout: [] };
         }
         logger.error("IPC_HANDLER: 'get-cues' - cueManager not available");
-        return [];
+        return { version: 2, cues: [], sections: [], layout: [] };
     });
 
     ipcMain.handle('save-cues', async (event, updatedCues) => {
@@ -57,6 +60,46 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
             return { success: true };
         }
         return { success: false, error: 'CueManager not available' };
+    });
+
+    ipcMain.handle('save-workspace-layout', async (event, payload) => {
+        if (!cueManager || typeof cueManager.setWorkspace !== 'function') {
+            return { success: false, error: 'CueManager not available' };
+        }
+        const success = await cueManager.setWorkspace(payload || {});
+        if (success && workspaceManager) workspaceManager.markWorkspaceAsEdited();
+        if (success && mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+            logger.info("IPC_HANDLER: 'save-workspace-layout' - Broadcasting updated workspace to renderer.");
+            mainWindow.webContents.send('cues-updated-from-main', cueManager.getWorkspaceSnapshot());
+        }
+        return { success: !!success };
+    });
+
+    ipcMain.handle('add-cue-section', async (event, { title, afterSectionId } = {}) => {
+        if (!cueManager || typeof cueManager.addSection !== 'function') {
+            return { success: false, error: 'CueManager not available' };
+        }
+        const section = await cueManager.addSection(title || 'New Section', afterSectionId || null);
+        if (workspaceManager) workspaceManager.markWorkspaceAsEdited();
+        return { success: true, section };
+    });
+
+    ipcMain.handle('update-cue-section', async (event, { sectionId, patch } = {}) => {
+        if (!cueManager || typeof cueManager.updateSection !== 'function') {
+            return { success: false, error: 'CueManager not available' };
+        }
+        const success = await cueManager.updateSection(sectionId, patch || {});
+        if (success && workspaceManager) workspaceManager.markWorkspaceAsEdited();
+        return { success };
+    });
+
+    ipcMain.handle('delete-cue-section', async (event, { sectionId } = {}) => {
+        if (!cueManager || typeof cueManager.deleteSection !== 'function') {
+            return { success: false, error: 'CueManager not available' };
+        }
+        const success = await cueManager.deleteSection(sectionId);
+        if (success && workspaceManager) workspaceManager.markWorkspaceAsEdited();
+        return { success };
     });
 
     ipcMain.handle('load-cues', async () => {
@@ -231,7 +274,7 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
                 if (workspaceManager) workspaceManager.markWorkspaceAsEdited();
                 if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
                     logger.info(`IPC_HANDLER: 'delete-cue' - Cue ${cueId} deleted. Sending updated cue list to renderer.`);
-                    mainWindow.webContents.send('cues-updated-from-main', cueManager.getCues());
+                    mainWindow.webContents.send('cues-updated-from-main', cueManager.getWorkspaceSnapshot());
                 }
                 return { success: true };
             } else {
@@ -244,6 +287,24 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
         }
     });
 
+    ipcMain.handle('delete-cues', async (event, cueIds) => {
+        try {
+            const deleted = await cueManager.deleteCues(cueIds);
+            if (deleted.length > 0) {
+                if (workspaceManager) workspaceManager.markWorkspaceAsEdited();
+                if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+                    logger.info(`IPC_HANDLER: 'delete-cues' - Deleted ${deleted.length} cue(s). Sending updated workspace to renderer.`);
+                    mainWindow.webContents.send('cues-updated-from-main', cueManager.getWorkspaceSnapshot());
+                }
+                return { success: true, deletedCount: deleted.length, deletedIds: deleted };
+            }
+            return { success: false, error: 'No matching cues found to delete.' };
+        } catch (error) {
+            logger.error('Error deleting cues:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('add-or-update-cue', async (event, cueData) => {
         if (!cueManager) {
             logger.error("IPC_HANDLER: 'add-or-update-cue' - cueManager not available");
@@ -252,10 +313,7 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
         try {
             logger.info(`IPC_HANDLER: 'add-or-update-cue' for ID: ${cueData.id || 'new cue'}`);
             const processedCue = await cueManager.addOrUpdateProcessedCue(cueData);
-            
-            if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-                mainWindow.webContents.send('cues-updated-from-main', cueManager.getCues());
-            }
+            // saveCuesToFile inside addOrUpdateProcessedCue already broadcasts getWorkspaceSnapshot().
             return { success: true, cue: processedCue };
         } catch (error) {
             logger.error('IPC_HANDLER: Error processing add-or-update-cue:', error);

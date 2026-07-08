@@ -125,8 +125,7 @@ async function handleRemoteMessage(ws, message) {
 
         if (action === 'request_all_cues_for_remote') {
             if (cueManagerRef) {
-                const processedCues = formatCuesForRemote(cueManagerRef.getCues());
-                sendToClient(ws, { type: 'all_cues', payload: processedCues });
+                sendToClient(ws, formatWorkspaceBroadcast(cueManagerRef));
                 sendToClient(ws, { type: 'config_snapshot', payload: getRemoteConfigSnapshot(appConfigRef || {}) });
             }
             return;
@@ -186,13 +185,26 @@ async function handleRemoteMessage(ws, message) {
         }
 
         if (action === 'reorder_cues') {
-            if (!cueManagerRef || !Array.isArray(parsedMessage.cueIds)) {
+            if (!cueManagerRef) {
+                sendActionResult(ws, action, false, 'Invalid reorder request');
+                return;
+            }
+            const hasLayout = Array.isArray(parsedMessage.layout) && parsedMessage.layout.length > 0;
+            const hasCueIds = Array.isArray(parsedMessage.cueIds) && parsedMessage.cueIds.length > 0;
+            if (!hasLayout && !hasCueIds) {
                 sendActionResult(ws, action, false, 'Invalid reorder request');
                 return;
             }
             try {
-                const reordered = reorderCuesByIds(cueManagerRef.getCues(), parsedMessage.cueIds);
-                await cueManagerRef.setCues(reordered);
+                if (hasLayout && typeof cueManagerRef.setWorkspace === 'function') {
+                    await cueManagerRef.setWorkspace({
+                        layout: parsedMessage.layout,
+                        sections: Array.isArray(parsedMessage.sections) ? parsedMessage.sections : cueManagerRef.getSections()
+                    });
+                } else if (hasCueIds) {
+                    const reordered = reorderCuesByIds(cueManagerRef.getCues(), parsedMessage.cueIds);
+                    await cueManagerRef.setCues(reordered);
+                }
                 if (workspaceManagerRef && typeof workspaceManagerRef.markWorkspaceAsEdited === 'function') {
                     workspaceManagerRef.markWorkspaceAsEdited();
                 }
@@ -200,6 +212,28 @@ async function handleRemoteMessage(ws, message) {
             } catch (error) {
                 sendActionResult(ws, action, false, error.message);
             }
+            return;
+        }
+
+        if (action === 'update_section') {
+            if (!cueManagerRef || !parsedMessage.sectionId) {
+                sendActionResult(ws, action, false, 'Invalid section update request');
+                return;
+            }
+            const success = await cueManagerRef.updateSection(parsedMessage.sectionId, parsedMessage.patch || {});
+            if (success && workspaceManagerRef) workspaceManagerRef.markWorkspaceAsEdited();
+            sendActionResult(ws, action, success);
+            return;
+        }
+
+        if (action === 'add_section') {
+            if (!cueManagerRef) {
+                sendActionResult(ws, action, false, 'Cue manager unavailable');
+                return;
+            }
+            await cueManagerRef.addSection(parsedMessage.title || 'New Section', parsedMessage.afterSectionId || null);
+            if (workspaceManagerRef) workspaceManagerRef.markWorkspaceAsEdited();
+            sendActionResult(ws, action, true);
             return;
         }
 
@@ -305,6 +339,18 @@ function formatCuesForRemote(cues) {
     return cues.map(cue => processCueForRemote(cue));
 }
 
+function formatWorkspaceBroadcast(cueManager) {
+    const workspace = typeof cueManager.getWorkspaceSnapshot === 'function'
+        ? cueManager.getWorkspaceSnapshot()
+        : { cues: cueManager.getCues(), sections: [], layout: [] };
+    return {
+        type: 'all_cues',
+        payload: formatCuesForRemote(workspace.cues),
+        sections: workspace.sections || [],
+        layout: workspace.layout || []
+    };
+}
+
 function initialize(cueMgr, mainWin, appConfig = null, workspaceMgr = null, appConfigMgr = null) {
     cueManagerRef = cueMgr;
     mainWindowRef = mainWin;
@@ -361,12 +407,11 @@ function initialize(cueMgr, mainWin, appConfig = null, workspaceMgr = null, appC
 
         // Send current cues on connection
         if (cueManagerRef) {
-            const rawCues = cueManagerRef.getCues();
-            const processedCues = formatCuesForRemote(rawCues);
-            rawCues.forEach((cue, index) => {
-                logger.info(`HTTP_SERVER: Initial cue data for ${cue.id} (${cue.type}): trimmed=${processedCues[index].currentItemDurationS}s, original=${processedCues[index].knownDurationS}s`);
+            const workspace = formatWorkspaceBroadcast(cueManagerRef);
+            workspace.payload.forEach((cue, index) => {
+                logger.info(`HTTP_SERVER: Initial cue data for ${cue.id} (${cue.type}): trimmed=${cue.currentItemDurationS}s, original=${cue.knownDurationS}s`);
             });
-            ws.send(JSON.stringify({ type: 'all_cues', payload: processedCues }));
+            ws.send(JSON.stringify(workspace));
             sendToClient(ws, { type: 'config_snapshot', payload: getRemoteConfigSnapshot(appConfigRef || {}) });
         }
 

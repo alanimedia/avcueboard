@@ -4,6 +4,8 @@
 import { uiLog } from './ui/uiLogger.js';
 
 let cues = [];
+let sections = [];
+let layout = [];
 let ipcBindings; // To interact with main process for loading/saving
 let sidebarsAPI; // To notify sidebars to refresh
 let uiAPI; // To notify UI to refresh grid
@@ -12,33 +14,65 @@ let cueGridAPI; // Specifically for refreshing the cue grid
 
 let isInitialized = false; // Flag to indicate if init has completed
 
-// This is the actual handler function
-function _handleCuesUpdated(updatedCues) {
-    uiLog.debug('**************** CueStore (_handleCuesUpdated) ENTERED ****************');
-    uiLog.info('CueStore (_handleCuesUpdated): Received cues from main. Count:', updatedCues ? updatedCues.length : 'N/A');
-    if (Array.isArray(updatedCues)) {
-        cues = updatedCues.map(cue => {
-            // Log the cue as it comes from main process before any potential re-mapping here
-            uiLog.debug(`CueStore (_handleCuesUpdated MAP): Processing cue ID ${cue.id}. Main process version:`, JSON.parse(JSON.stringify(cue)));
-            const newMappedCue = {
-                ...cue, // Spread the incoming cue first
-                enableDucking: cue.enableDucking !== undefined ? cue.enableDucking : false,
-                isDuckingTrigger: cue.isDuckingTrigger !== undefined ? cue.isDuckingTrigger : false,
-                duckingLevel: cue.duckingLevel !== undefined ? cue.duckingLevel : 80,
-            };
-            // Ensure trim defaults are respected: start defaults to 0, end remains undefined if not set
-            if (newMappedCue.trimStartTime === undefined || newMappedCue.trimStartTime === null) {
-                newMappedCue.trimStartTime = 0;
-            }
-            if (newMappedCue.trimEndTime === 0) {
-                // Interpret 0 end as unset; use undefined so UI shows "End" and playback calculates correctly
-                delete newMappedCue.trimEndTime;
-            }
-            uiLog.debug(`CueStore (_handleCuesUpdated MAP): Mapped cue ID ${cue.id}. Renderer version:`, JSON.parse(JSON.stringify(newMappedCue)));
-            return newMappedCue;
-        });
+function applyWorkspacePayload(payload) {
+    if (Array.isArray(payload)) {
+        cues = payload.map(cue => sanitizeCueFromMain(cue));
+        // Legacy cue-only updates: keep existing sections/layout when possible.
+        if (sections.length > 0 && layout.length > 0) {
+            const validCueIds = new Set(cues.map(cue => cue.id));
+            layout = layout.filter(entry =>
+                entry.type === 'section' || (entry.type === 'cue' && validCueIds.has(entry.cueId))
+            );
+            const layoutCueIds = new Set(
+                layout.filter(entry => entry.type === 'cue').map(entry => entry.cueId)
+            );
+            const defaultSectionId = sections[0]?.id;
+            cues.forEach(cue => {
+                if (!layoutCueIds.has(cue.id) && defaultSectionId) {
+                    layout.push({ type: 'cue', cueId: cue.id, sectionId: defaultSectionId });
+                }
+            });
+            return;
+        }
+        const defaultSectionId = 'default-section';
+        sections = [{ id: defaultSectionId, title: 'Cues', collapsed: false }];
+        layout = [
+            { type: 'section', sectionId: defaultSectionId },
+            ...cues.map(cue => ({ type: 'cue', cueId: cue.id, sectionId: defaultSectionId }))
+        ];
+        return;
+    }
+    if (!payload || !Array.isArray(payload.cues)) {
+        uiLog.error('CueStore: Invalid workspace payload.', payload);
+        return;
+    }
+    cues = payload.cues.map(cue => sanitizeCueFromMain(cue));
+    sections = Array.isArray(payload.sections) ? payload.sections.map(section => ({ ...section })) : [];
+    layout = Array.isArray(payload.layout) ? payload.layout.map(entry => ({ ...entry })) : [];
+}
 
-        uiLog.info('CueStore (_handleCuesUpdated): Internal cache updated & sanitized.');
+function sanitizeCueFromMain(cue) {
+    const newMappedCue = {
+        ...cue,
+        enableDucking: cue.enableDucking !== undefined ? cue.enableDucking : false,
+        isDuckingTrigger: cue.isDuckingTrigger !== undefined ? cue.isDuckingTrigger : false,
+        duckingLevel: cue.duckingLevel !== undefined ? cue.duckingLevel : 80,
+    };
+    if (newMappedCue.trimStartTime === undefined || newMappedCue.trimStartTime === null) {
+        newMappedCue.trimStartTime = 0;
+    }
+    if (newMappedCue.trimEndTime === 0) {
+        delete newMappedCue.trimEndTime;
+    }
+    return newMappedCue;
+}
+
+// This is the actual handler function
+function _handleCuesUpdated(updatedPayload) {
+    uiLog.debug('**************** CueStore (_handleCuesUpdated) ENTERED ****************');
+    if (Array.isArray(updatedPayload) || (updatedPayload && Array.isArray(updatedPayload.cues))) {
+        applyWorkspacePayload(updatedPayload);
+        uiLog.info('CueStore (_handleCuesUpdated): Internal workspace cache updated. Cues:', cues.length, 'Sections:', sections.length);
 
         // Refresh properties sidebar if it's open for a playlist that might have changed
         // sidebarsAPI should be uiHandles.propertiesSidebarModule from init
@@ -68,8 +102,20 @@ function _handleCuesUpdated(updatedCues) {
             uiLog.warn('CueStore (_handleCuesUpdated): cueGridAPI.renderCues is not a function.');
         }
     } else {
-        uiLog.error('CueStore (_handleCuesUpdated): Invalid data. Expected array.', updatedCues);
+        uiLog.error('CueStore (_handleCuesUpdated): Invalid data.', updatedPayload);
     }
+}
+
+function getSections() {
+    return sections.map(section => ({ ...section }));
+}
+
+function getLayout() {
+    return layout.map(entry => ({ ...entry }));
+}
+
+function getCueMap() {
+    return new Map(cues.map(cue => [cue.id, cue]));
 }
 
 // Call this function to initialize the module with dependencies
@@ -110,17 +156,13 @@ async function loadCuesFromServer() {
     }
     try {
         uiLog.info('CueStore: Requesting cues from main process...');
-        const loadedCues = await ipcBindings.getCuesFromMain();
-        if (Array.isArray(loadedCues)) {
-            cues = loadedCues.map(cue => ({
-                ...cue
-            }));
-            // Clean up any lingering properties that might have been missed or from very old files
-
-            uiLog.info('CueStore: Cues loaded from server and sanitized:', cues);
+        const loadedWorkspace = await ipcBindings.getCuesFromMain();
+        if (Array.isArray(loadedWorkspace) || (loadedWorkspace && Array.isArray(loadedWorkspace.cues))) {
+            applyWorkspacePayload(loadedWorkspace);
+            uiLog.info('CueStore: Workspace loaded from server. Cues:', cues.length, 'Sections:', sections.length);
             return true;
         } else {
-            uiLog.error('CueStore: Received invalid cue data from server:', loadedCues);
+            uiLog.error('CueStore: Received invalid cue data from server:', loadedWorkspace);
             cues = []; // Fallback to empty
             return false;
         }
@@ -144,7 +186,7 @@ function getAllCues() {
 }
 
 // Adds a new cue or updates an existing one by sending it to the main process
-async function addOrUpdateCue(cueData) {
+async function addOrUpdateCue(cueData, layoutOptions = null) {
     if (!ipcBindings || typeof ipcBindings.addOrUpdateCue !== 'function') {
         uiLog.error('CueStore: IPC bindings or addOrUpdateCue function not initialized. Cannot save cue.');
         // Consider throwing an error or returning a promise that rejects
@@ -165,7 +207,8 @@ async function addOrUpdateCue(cueData) {
     // Sanitize cueData before sending to main process
 
     const sanitizedCueData = {
-        ...cueData
+        ...cueData,
+        ...(layoutOptions ? { _layoutOptions: layoutOptions } : {})
     };
 
     uiLog.info(`CueStore: Sending cue (ID: ${sanitizedCueData.id || 'new'}) to main process for add/update.`);
@@ -213,6 +256,31 @@ async function deleteCue(id) {
     }
 }
 
+async function deleteCues(ids) {
+    if (!ipcBindings || typeof ipcBindings.deleteCues !== 'function') {
+        uiLog.error('CueStore: IPC bindings or deleteCues function not initialized. Cannot delete cues.');
+        return { success: false, error: 'IPC bindings not available for deleting cues.' };
+    }
+    const cueIds = Array.isArray(ids) ? ids.filter(Boolean) : [];
+    if (cueIds.length === 0) {
+        return { success: false, error: 'No cue IDs provided for deletion.' };
+    }
+
+    uiLog.info(`CueStore: Sending delete request for ${cueIds.length} cue(s) to main process.`);
+    try {
+        const result = await ipcBindings.deleteCues(cueIds);
+        if (result && result.success) {
+            uiLog.info(`CueStore: Deleted ${result.deletedCount || cueIds.length} cue(s) via main process.`);
+        } else {
+            uiLog.error('CueStore: Main process failed to delete cues.', result ? result.error : 'Unknown error');
+        }
+        return result;
+    } catch (error) {
+        uiLog.error('CueStore: Error calling deleteCues IPC binding:', error);
+        return { success: false, error: error.message || 'IPC call failed' };
+    }
+}
+
 // New function to update the local cues cache from an authoritative main process update
 // RENAMED from setCuesFromMain
 // THIS FUNCTION IS NOW EFFECTIVELY INLINED/HANDLED BY ipcBindings.onCueListUpdated above.
@@ -221,6 +289,45 @@ async function deleteCue(id) {
 
 function isCueStoreReady() {
     return isInitialized;
+}
+
+async function saveWorkspaceLayout(nextSections, nextLayout, nextCues = null) {
+    if (!ipcBindings || typeof ipcBindings.saveWorkspaceLayout !== 'function') {
+        uiLog.error('CueStore: saveWorkspaceLayout IPC not available.');
+        return { success: false, error: 'IPC bindings not available for layout save.' };
+    }
+    try {
+        const payload = {
+            sections: nextSections,
+            layout: nextLayout
+        };
+        if (Array.isArray(nextCues)) payload.cues = nextCues;
+        return await ipcBindings.saveWorkspaceLayout(payload);
+    } catch (error) {
+        uiLog.error('CueStore: Error saving workspace layout:', error);
+        return { success: false, error: error.message || 'IPC call failed' };
+    }
+}
+
+async function addSection(title, afterSectionId = null) {
+    if (!ipcBindings || typeof ipcBindings.addCueSection !== 'function') {
+        return { success: false, error: 'IPC bindings not available for add section.' };
+    }
+    return ipcBindings.addCueSection(title, afterSectionId);
+}
+
+async function updateSection(sectionId, patch) {
+    if (!ipcBindings || typeof ipcBindings.updateCueSection !== 'function') {
+        return { success: false, error: 'IPC bindings not available for update section.' };
+    }
+    return ipcBindings.updateCueSection(sectionId, patch);
+}
+
+async function deleteSection(sectionId) {
+    if (!ipcBindings || typeof ipcBindings.deleteCueSection !== 'function') {
+        return { success: false, error: 'IPC bindings not available for delete section.' };
+    }
+    return ipcBindings.deleteCueSection(sectionId);
 }
 
 async function reorderCues(newOrder) {
@@ -260,4 +367,22 @@ async function saveReorderedCues(reorderedCues) {
     return reorderCues(newOrder);
 }
 
-export { init, loadCuesFromServer, getCueById, getAllCues, addOrUpdateCue, deleteCue, isCueStoreReady, reorderCues, saveReorderedCues }; 
+export {
+    init,
+    loadCuesFromServer,
+    getCueById,
+    getAllCues,
+    getSections,
+    getLayout,
+    getCueMap,
+    addOrUpdateCue,
+    deleteCue,
+    deleteCues,
+    isCueStoreReady,
+    reorderCues,
+    saveReorderedCues,
+    saveWorkspaceLayout,
+    addSection,
+    updateSection,
+    deleteSection
+}; 

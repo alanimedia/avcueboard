@@ -53,14 +53,125 @@
             overflow-y: auto;
         }
         #cueGridRemote {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-            gap: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
             width: 100%;
             max-width: 900px;
             padding: 10px;
             margin: 0 auto;
             box-sizing: border-box;
+        }
+        .remote-section-block {
+            width: 100%;
+        }
+        .remote-section-block.collapsed .remote-section-body {
+            display: none;
+        }
+        .remote-section-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            border-radius: 3px;
+            user-select: none;
+            background: #505050;
+            border: 1px solid #666666;
+            transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+        }
+        .remote-section-block.collapsed .remote-section-header {
+            background: #454545;
+            border-color: #5a5a5a;
+            margin-bottom: 0;
+            opacity: 0.92;
+        }
+        .remote-section-header:hover {
+            background: #5a5a5a;
+            border-color: #777777;
+        }
+        .remote-section-block.collapsed .remote-section-header:hover {
+            background: #4e4e4e;
+        }
+        .remote-section-toggle {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.85);
+            cursor: pointer;
+            font-size: 0.75em;
+            padding: 0 4px;
+        }
+        .remote-section-drag-handle {
+            cursor: grab;
+            color: rgba(255, 255, 255, 0.55);
+            font-size: 0.8em;
+            padding: 0 2px;
+            user-select: none;
+            line-height: 1;
+            letter-spacing: -0.12em;
+        }
+        .remote-section-drag-handle:active {
+            cursor: grabbing;
+        }
+        .remote-section-block.dragging-section {
+            opacity: 0.55;
+        }
+        .remote-section-block.section-insert-before {
+            box-shadow: inset 0 3px 0 0 rgba(217, 119, 6, 0.85);
+        }
+        .remote-section-block.section-insert-after {
+            box-shadow: inset 0 -3px 0 0 rgba(217, 119, 6, 0.85);
+        }
+        #cueGridRemote.section-drag-active .remote-section-body {
+            pointer-events: none;
+        }
+        .remote-section-title {
+            flex: 1;
+            font-size: 0.76em;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.92);
+            transition: color 0.15s ease;
+        }
+        .remote-section-block.collapsed .remote-section-title {
+            color: rgba(255, 255, 255, 0.72);
+            font-weight: 500;
+        }
+        input.remote-section-title {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            padding: 3px 8px;
+            color: inherit;
+            font: inherit;
+            text-transform: none;
+            letter-spacing: 0.04em;
+        }
+        .remote-section-body {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 10px;
+        }
+        body.remote-edit-mode .remote-section-body {
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        }
+        .remote-section-body.remote-section-drag-over {
+            background: rgba(217, 119, 6, 0.12);
+            outline: 1px dashed rgba(217, 119, 6, 0.45);
+            outline-offset: -1px;
+            border-radius: 6px;
+        }
+        .remote-section-add-btn {
+            align-self: flex-start;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px dashed rgba(255, 255, 255, 0.22);
+            color: rgba(255, 255, 255, 0.75);
+            border-radius: 6px;
+            padding: 8px 14px;
+            cursor: pointer;
+            font-size: 0.85em;
         }
         .cue-button-remote {
             aspect-ratio: auto;
@@ -1040,6 +1151,8 @@
         const remoteCuePropertiesClose = document.getElementById('remoteCuePropertiesClose');
         const remoteToast = document.getElementById('remoteToast');
         let currentCues = {};
+        let currentSections = [];
+        let currentLayout = [];
         let activeCuePropertiesId = null;
         let activeCueDetail = null;
         let appConfigRemote = {};
@@ -1425,6 +1538,8 @@
                     currentCues = {};
                     if (message.payload && Array.isArray(message.payload)) {
                         message.payload.forEach(cue => currentCues[cue.id] = cue);
+                        currentSections = Array.isArray(message.sections) ? message.sections : [];
+                        currentLayout = Array.isArray(message.layout) ? message.layout : [];
                         renderAllCuesRemote(message.payload);
                         syncPlayingCuesToRemotePanel();
                         if (activeCuePropertiesId && !currentCues[activeCuePropertiesId]) {
@@ -2068,6 +2183,354 @@
         }
 
 
+        function getRemoteLayoutEntries(cues) {
+            if (currentLayout.length > 0) return currentLayout;
+            if (currentSections.length > 0) {
+                return [
+                    { type: 'section', sectionId: currentSections[0].id },
+                    ...cues.map(cue => ({ type: 'cue', cueId: cue.id, sectionId: currentSections[0].id }))
+                ];
+            }
+            return cues.map(cue => ({ type: 'cue', cueId: cue.id }));
+        }
+
+        function buildRemoteLayoutFromDom() {
+            const layout = [];
+            if (!cueGridRemote) return layout;
+            cueGridRemote.querySelectorAll(':scope > .remote-section-block').forEach(block => {
+                const sectionId = block.dataset.sectionId;
+                if (!sectionId) return;
+                layout.push({ type: 'section', sectionId });
+                block.querySelectorAll(':scope > .remote-section-body > .cue-edit-card').forEach(card => {
+                    const cueId = card.dataset.cueId;
+                    if (cueId) {
+                        layout.push({ type: 'cue', cueId, sectionId });
+                    }
+                });
+            });
+            return layout;
+        }
+
+        function persistRemoteLayoutFromDom() {
+            const layout = buildRemoteLayoutFromDom();
+            currentLayout = layout;
+            sendRemoteAction('reorder_cues', {
+                layout,
+                sections: currentSections
+            });
+        }
+
+        function getRemoteSectionCards(sectionBody) {
+            if (!sectionBody) return [];
+            return [...sectionBody.querySelectorAll(':scope > .cue-edit-card')];
+        }
+
+        function sortRemoteCardsDocumentOrder(cards) {
+            return [...cards].sort((a, b) => {
+                if (a === b) return 0;
+                const position = a.compareDocumentPosition(b);
+                if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+                if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+                return 0;
+            });
+        }
+
+        function getActiveRemoteDragCards() {
+            const group = [...document.querySelectorAll('.cue-edit-card.dragging-cue-group')];
+            if (group.length > 0) return sortRemoteCardsDocumentOrder(group);
+            const primary = document.querySelector('.cue-edit-card.dragging');
+            return primary ? [primary] : [];
+        }
+
+        function insertRemoteCardsBefore(parent, cards, referenceNode) {
+            const ordered = sortRemoteCardsDocumentOrder(cards);
+            ordered.forEach(card => card.remove());
+            let ref = referenceNode;
+            ordered.forEach(card => {
+                parent.insertBefore(card, ref);
+                ref = card.nextSibling;
+            });
+        }
+
+        function insertRemoteCardsAfter(parent, cards, referenceNode) {
+            const ordered = sortRemoteCardsDocumentOrder(cards);
+            ordered.forEach(card => card.remove());
+            let ref = referenceNode.nextSibling;
+            ordered.forEach(card => {
+                parent.insertBefore(card, ref);
+                ref = card.nextSibling;
+            });
+        }
+
+        function appendRemoteCardsToSection(sectionBody, cards) {
+            const ordered = sortRemoteCardsDocumentOrder(cards);
+            ordered.forEach(card => card.remove());
+            ordered.forEach(card => sectionBody.appendChild(card));
+        }
+
+        function moveRemoteEditCardsInSection(sectionBody, cards, clientX, clientY) {
+            if (!sectionBody || !cards?.length) return;
+            const targets = [...sectionBody.querySelectorAll(':scope > .cue-edit-card:not(.dragging-cue-group)')];
+            let insertBeforeNode = null;
+            let insertAfterNode = null;
+
+            for (const card of targets) {
+                const rect = card.getBoundingClientRect();
+                const inRow = clientY >= rect.top && clientY <= rect.bottom;
+                if (!inRow) continue;
+                if (clientX < rect.left + rect.width / 2) {
+                    insertBeforeNode = card;
+                } else {
+                    insertAfterNode = card;
+                }
+                break;
+            }
+
+            if (insertBeforeNode) {
+                insertRemoteCardsBefore(sectionBody, cards, insertBeforeNode);
+            } else if (insertAfterNode) {
+                insertRemoteCardsAfter(sectionBody, cards, insertAfterNode);
+            } else {
+                appendRemoteCardsToSection(sectionBody, cards);
+            }
+        }
+
+        function resolveRemoteSectionBodyFromTarget(target) {
+            if (!target) return null;
+            const body = target.closest('.remote-section-body');
+            if (body) return body;
+            const block = target.closest('.remote-section-block');
+            return block?.querySelector('.remote-section-body') || null;
+        }
+
+        function moveRemoteEditCardInDom(draggedCard, targetParent, insertBeforeNode) {
+            if (!draggedCard || !targetParent) return;
+            draggedCard.remove();
+            if (insertBeforeNode) {
+                targetParent.insertBefore(draggedCard, insertBeforeNode);
+            } else {
+                targetParent.appendChild(draggedCard);
+            }
+        }
+
+        const REMOTE_SECTION_DRAG_MIME = 'application/x-accompaniment-section-id';
+
+        function isRemoteSectionDragEvent(event) {
+            return event.dataTransfer?.types?.includes(REMOTE_SECTION_DRAG_MIME);
+        }
+
+        function clearRemoteSectionInsertIndicators() {
+            cueGridRemote?.querySelectorAll('.remote-section-block.section-insert-before, .remote-section-block.section-insert-after')
+                .forEach(el => el.classList.remove('section-insert-before', 'section-insert-after'));
+        }
+
+        function updateRemoteSectionInsertIndicator(clientY) {
+            if (!cueGridRemote) return;
+            clearRemoteSectionInsertIndicators();
+            const blocks = [...cueGridRemote.querySelectorAll(':scope > .remote-section-block:not(.dragging-section)')];
+            for (const block of blocks) {
+                const rect = block.getBoundingClientRect();
+                if (clientY < rect.top + rect.height / 2) {
+                    block.classList.add('section-insert-before');
+                    return;
+                }
+            }
+            if (blocks.length > 0) {
+                blocks[blocks.length - 1].classList.add('section-insert-after');
+            }
+        }
+
+        function moveRemoteSectionBlockByPosition(draggedBlock, clientY) {
+            if (!cueGridRemote || !draggedBlock) return;
+            const addBtn = cueGridRemote.querySelector(':scope > .remote-section-add-btn');
+            const blocks = [...cueGridRemote.querySelectorAll(':scope > .remote-section-block:not(.dragging-section)')];
+            draggedBlock.remove();
+            for (const block of blocks) {
+                const rect = block.getBoundingClientRect();
+                if (clientY < rect.top + rect.height / 2) {
+                    cueGridRemote.insertBefore(draggedBlock, block);
+                    return;
+                }
+            }
+            if (addBtn) {
+                cueGridRemote.insertBefore(draggedBlock, addBtn);
+            } else {
+                cueGridRemote.appendChild(draggedBlock);
+            }
+        }
+
+        function bindRemoteSectionBlockDragDrop() {
+            if (!cueGridRemote || cueGridRemote.dataset.sectionBlockDragBound === 'true') return;
+            cueGridRemote.dataset.sectionBlockDragBound = 'true';
+
+            cueGridRemote.addEventListener('dragover', (event) => {
+                if (remoteMode !== 'edit') return;
+                if (!isRemoteSectionDragEvent(event)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = 'move';
+                updateRemoteSectionInsertIndicator(event.clientY);
+            });
+
+            cueGridRemote.addEventListener('dragleave', (event) => {
+                if (!isRemoteSectionDragEvent(event)) return;
+                if (cueGridRemote.contains(event.relatedTarget)) return;
+                clearRemoteSectionInsertIndicators();
+            });
+
+            cueGridRemote.addEventListener('drop', (event) => {
+                if (remoteMode !== 'edit') return;
+                if (!isRemoteSectionDragEvent(event)) return;
+                const sectionId = event.dataTransfer.getData(REMOTE_SECTION_DRAG_MIME);
+                const draggedBlock = cueGridRemote.querySelector(`.remote-section-block[data-section-id="${sectionId}"]`);
+                if (!draggedBlock) return;
+                event.preventDefault();
+                event.stopPropagation();
+                clearRemoteSectionInsertIndicators();
+                moveRemoteSectionBlockByPosition(draggedBlock, event.clientY);
+                cueGridRemote.classList.remove('section-drag-active');
+                draggedBlock.classList.remove('dragging-section');
+                persistRemoteLayoutFromDom();
+            });
+        }
+
+        function bindRemoteSectionCueDragDrop() {
+            if (!cueGridRemote || cueGridRemote.dataset.sectionCueDropBound === 'true') return;
+            cueGridRemote.dataset.sectionCueDropBound = 'true';
+
+            const clearSectionDragOver = () => {
+                cueGridRemote.querySelectorAll('.remote-section-body.remote-section-drag-over').forEach(el => {
+                    el.classList.remove('remote-section-drag-over');
+                });
+            };
+
+            cueGridRemote.addEventListener('dragover', (event) => {
+                if (remoteMode !== 'edit') return;
+                if (isRemoteSectionDragEvent(event)) return;
+                if (getActiveRemoteDragCards().length === 0) return;
+                const sectionBody = resolveRemoteSectionBodyFromTarget(event.target);
+                if (!sectionBody) return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = 'move';
+                clearSectionDragOver();
+                sectionBody.classList.add('remote-section-drag-over');
+            });
+
+            cueGridRemote.addEventListener('dragleave', (event) => {
+                const sectionBody = event.target.closest?.('.remote-section-body');
+                if (!sectionBody) return;
+                if (sectionBody.contains(event.relatedTarget)) return;
+                sectionBody.classList.remove('remote-section-drag-over');
+            });
+
+            cueGridRemote.addEventListener('drop', (event) => {
+                if (remoteMode !== 'edit') return;
+                if (isRemoteSectionDragEvent(event)) return;
+                const draggedCards = getActiveRemoteDragCards();
+                if (draggedCards.length === 0) return;
+                const sectionBody = resolveRemoteSectionBodyFromTarget(event.target);
+                if (!sectionBody) return;
+                if (event.target.closest('.cue-edit-card:not(.dragging-cue-group)')) return;
+                event.preventDefault();
+                event.stopPropagation();
+                clearSectionDragOver();
+                moveRemoteEditCardsInSection(sectionBody, draggedCards, event.clientX, event.clientY);
+                draggedCards.forEach(card => card.classList.remove('dragging', 'dragging-cue-group'));
+                draggedEditCueId = null;
+                persistRemoteLayoutFromDom();
+                refreshAllRemoteReorderButtons();
+            });
+        }
+
+        function createRemoteSectionBlock(section) {
+            const block = document.createElement('div');
+            block.className = 'remote-section-block';
+            block.dataset.sectionId = section.id;
+            if (section.collapsed) block.classList.add('collapsed');
+
+            const header = document.createElement('div');
+            header.className = 'remote-section-header';
+
+            if (remoteMode === 'edit') {
+                const dragHandle = document.createElement('span');
+                dragHandle.className = 'remote-section-drag-handle';
+                dragHandle.title = 'Drag to reorder section';
+                dragHandle.textContent = '⋮⋮';
+                dragHandle.draggable = true;
+                dragHandle.setAttribute('aria-label', 'Drag to reorder section');
+                dragHandle.addEventListener('mousedown', (e) => e.stopPropagation());
+                dragHandle.addEventListener('click', (e) => e.stopPropagation());
+                dragHandle.addEventListener('dragstart', (e) => {
+                    e.stopPropagation();
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData(REMOTE_SECTION_DRAG_MIME, section.id);
+                    block.classList.add('dragging-section');
+                    cueGridRemote?.classList.add('section-drag-active');
+                });
+                dragHandle.addEventListener('dragend', () => {
+                    block.classList.remove('dragging-section');
+                    cueGridRemote?.classList.remove('section-drag-active');
+                    clearRemoteSectionInsertIndicators();
+                });
+                header.appendChild(dragHandle);
+            }
+
+            const toggleBtn = document.createElement('button');
+            toggleBtn.type = 'button';
+            toggleBtn.className = 'remote-section-toggle';
+            toggleBtn.textContent = section.collapsed ? '▸' : '▾';
+
+            const toggleCollapsed = () => {
+                const collapsed = !block.classList.contains('collapsed');
+                block.classList.toggle('collapsed', collapsed);
+                toggleBtn.textContent = collapsed ? '▸' : '▾';
+                sendRemoteAction('update_section', {
+                    sectionId: section.id,
+                    patch: { collapsed }
+                });
+            };
+
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleCollapsed();
+            });
+
+            header.addEventListener('click', (e) => {
+                if (e.target.closest('input.remote-section-title, .remote-section-toggle, .remote-section-drag-handle')) {
+                    return;
+                }
+                toggleCollapsed();
+            });
+
+            const titleEl = document.createElement(remoteMode === 'edit' ? 'input' : 'span');
+            titleEl.className = 'remote-section-title';
+            if (remoteMode === 'edit') {
+                titleEl.value = section.title || 'Section';
+                titleEl.addEventListener('mousedown', (e) => e.stopPropagation());
+                titleEl.addEventListener('click', (e) => e.stopPropagation());
+                titleEl.addEventListener('change', () => {
+                    sendRemoteAction('update_section', {
+                        sectionId: section.id,
+                        patch: { title: titleEl.value }
+                    });
+                });
+            } else {
+                titleEl.textContent = section.title || 'Section';
+            }
+
+            header.appendChild(toggleBtn);
+            header.appendChild(titleEl);
+
+            const body = document.createElement('div');
+            body.className = 'remote-section-body';
+            body.dataset.sectionId = section.id;
+
+            block.appendChild(header);
+            block.appendChild(body);
+            return block;
+        }
+
         function renderAllCuesRemote(cues) {
             if (remoteMode === 'edit') {
                 renderEditGridRemote(cues);
@@ -2078,11 +2541,31 @@
 
         function renderPlaybackGridRemote(cues) {
             cueGridRemote.innerHTML = '';
-            if (!cues || cues.length === 0) {
+            if ((!cues || cues.length === 0) && currentSections.length === 0) {
                 cueGridRemote.innerHTML = '<p style="text-align: center; color: #888;">No cues available.</p>';
                 return;
             }
-            cues.forEach(cue => {
+            const cueMap = new Map(cues.map(cue => [cue.id, cue]));
+            const sectionBodies = new Map();
+            getRemoteLayoutEntries(cues).forEach(entry => {
+                if (entry.type === 'section') {
+                    const section = currentSections.find(item => item.id === entry.sectionId);
+                    if (!section) return;
+                    const block = createRemoteSectionBlock(section);
+                    cueGridRemote.appendChild(block);
+                    sectionBodies.set(section.id, block.querySelector('.remote-section-body'));
+                    return;
+                }
+                if (entry.type === 'cue') {
+                    const cue = cueMap.get(entry.cueId);
+                    const body = sectionBodies.get(entry.sectionId) || cueGridRemote;
+                    if (!cue || !body) return;
+                    appendPlaybackCueCard(cue, body);
+                }
+            });
+        }
+
+        function appendPlaybackCueCard(cue, parentEl) {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'cue-remote-wrapper';
                 wrapper.dataset.cueId = cue.id;
@@ -2119,18 +2602,48 @@
                 wrapper.appendChild(button);
                 wrapper.appendChild(meterContainer);
                 updateRemoteCueMeter(cue);
-                cueGridRemote.appendChild(wrapper);
-            });
+                parentEl.appendChild(wrapper);
         }
 
         function renderEditGridRemote(cues) {
             cueGridRemote.innerHTML = '';
             cueGridRemote.classList.remove('drag-active');
-            if (!cues || cues.length === 0) {
+            if ((!cues || cues.length === 0) && currentSections.length === 0) {
                 cueGridRemote.innerHTML = '<p style="text-align: center; color: #888;">No cues available.</p>';
                 return;
             }
-            cues.forEach(cue => {
+            const cueMap = new Map(cues.map(cue => [cue.id, cue]));
+            const sectionBodies = new Map();
+            getRemoteLayoutEntries(cues).forEach(entry => {
+                if (entry.type === 'section') {
+                    const section = currentSections.find(item => item.id === entry.sectionId);
+                    if (!section) return;
+                    const block = createRemoteSectionBlock(section);
+                    cueGridRemote.appendChild(block);
+                    sectionBodies.set(section.id, block.querySelector('.remote-section-body'));
+                    return;
+                }
+                if (entry.type === 'cue') {
+                    const cue = cueMap.get(entry.cueId);
+                    const body = sectionBodies.get(entry.sectionId) || cueGridRemote;
+                    if (!cue || !body) return;
+                    appendEditCueCard(cue, body);
+                }
+            });
+            if (remoteMode === 'edit') {
+                const addBtn = document.createElement('button');
+                addBtn.type = 'button';
+                addBtn.className = 'remote-section-add-btn';
+                addBtn.textContent = '+ Add Section';
+                addBtn.addEventListener('click', () => sendRemoteAction('add_section', { title: 'New Section' }));
+                cueGridRemote.appendChild(addBtn);
+            }
+            bindRemoteSectionCueDragDrop();
+            bindRemoteSectionBlockDragDrop();
+            refreshAllRemoteReorderButtons();
+        }
+
+        function appendEditCueCard(cue, parentEl) {
                 const card = document.createElement('div');
                 card.className = 'cue-edit-card';
                 if (cue.id === activeCuePropertiesId) card.classList.add('cue-edit-selected');
@@ -2186,60 +2699,89 @@
                         openCuePropertiesPanel(cue.id);
                     });
                 }
-                bindCueMoveButtons(card, cue.id);
                 const dragHandle = card.querySelector('.cue-edit-drag');
                 bindEditCardDrag(card, dragHandle);
                 bindEditCardTouchReorder(card, dragHandle);
-                cueGridRemote.appendChild(card);
-            });
+                parentEl.appendChild(card);
+                bindCueMoveButtons(card, cue.id, parentEl);
+        }
+
+        function updateCueMoveButtonStates(card, sectionBody) {
+            const earlierBtn = card.querySelector('.cue-move-earlier');
+            const laterBtn = card.querySelector('.cue-move-later');
+            const cards = getRemoteSectionCards(sectionBody);
+            const idx = cards.indexOf(card);
+            if (earlierBtn) earlierBtn.disabled = idx <= 0;
+            if (laterBtn) laterBtn.disabled = idx < 0 || idx >= cards.length - 1;
+        }
+
+        function updateSectionReorderButtons(sectionBody) {
+            if (!sectionBody?.classList.contains('remote-section-body')) return;
+            getRemoteSectionCards(sectionBody).forEach(card => updateCueMoveButtonStates(card, sectionBody));
+        }
+
+        function refreshAllRemoteReorderButtons() {
+            cueGridRemote?.querySelectorAll('.remote-section-body').forEach(updateSectionReorderButtons);
         }
 
         function getCueOrderIds() {
-            return Object.values(currentCues).map(c => c.id);
+            const layoutIds = buildRemoteLayoutFromDom()
+                .filter(entry => entry.type === 'cue')
+                .map(entry => entry.cueId);
+            return layoutIds.length > 0 ? layoutIds : Object.values(currentCues).map(c => c.id);
         }
 
         function moveCueInOrder(cueId, delta) {
-            const ids = getCueOrderIds();
-            const idx = ids.indexOf(cueId);
+            const draggedCard = cueGridRemote.querySelector(`.cue-edit-card[data-cue-id="${cueId}"]`);
+            if (!draggedCard) return;
+            const sectionBody = draggedCard.parentElement;
+            if (!sectionBody?.classList.contains('remote-section-body')) return;
+            const cards = getRemoteSectionCards(sectionBody);
+            const idx = cards.indexOf(draggedCard);
             if (idx < 0) return;
             const newIdx = idx + delta;
-            if (newIdx < 0 || newIdx >= ids.length) return;
-            ids.splice(idx, 1);
-            ids.splice(newIdx, 0, cueId);
-            sendRemoteAction('reorder_cues', { cueIds: ids });
+            if (newIdx < 0 || newIdx >= cards.length) return;
+            const targetCard = cards[newIdx];
+            performCueReorder(cueId, targetCard.dataset.cueId, newIdx > idx);
         }
 
-        function bindCueMoveButtons(card, cueId) {
+        function bindCueMoveButtons(card, cueId, sectionBody) {
             const earlierBtn = card.querySelector('.cue-move-earlier');
             const laterBtn = card.querySelector('.cue-move-later');
-            const ids = getCueOrderIds();
-            const idx = ids.indexOf(cueId);
+            updateCueMoveButtonStates(card, sectionBody);
             if (earlierBtn) {
-                earlierBtn.disabled = idx <= 0;
                 earlierBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     moveCueInOrder(cueId, -1);
+                    refreshAllRemoteReorderButtons();
                 });
             }
             if (laterBtn) {
-                laterBtn.disabled = idx < 0 || idx >= ids.length - 1;
                 laterBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     moveCueInOrder(cueId, 1);
+                    refreshAllRemoteReorderButtons();
                 });
             }
         }
 
         function performCueReorder(fromId, toId, insertAfter) {
             if (!fromId || !toId || fromId === toId) return;
-            const ids = Object.values(currentCues).map(c => c.id);
-            const fromIdx = ids.indexOf(fromId);
-            let toIdx = ids.indexOf(toId);
-            if (fromIdx < 0 || toIdx < 0) return;
-            ids.splice(fromIdx, 1);
-            toIdx = ids.indexOf(toId);
-            ids.splice(insertAfter ? toIdx + 1 : toIdx, 0, fromId);
-            sendRemoteAction('reorder_cues', { cueIds: ids });
+            const draggedCards = getActiveRemoteDragCards();
+            const cardsToMove = draggedCards.length > 0 && draggedCards.some(card => card.dataset.cueId === fromId)
+                ? draggedCards
+                : [cueGridRemote.querySelector(`.cue-edit-card[data-cue-id="${fromId}"]`)].filter(Boolean);
+            const targetCard = cueGridRemote.querySelector(`.cue-edit-card[data-cue-id="${toId}"]`);
+            if (!cardsToMove.length || !targetCard) return;
+
+            const targetParent = targetCard.parentElement;
+            if (insertAfter) {
+                insertRemoteCardsAfter(targetParent, cardsToMove, targetCard);
+            } else {
+                insertRemoteCardsBefore(targetParent, cardsToMove, targetCard);
+            }
+            persistRemoteLayoutFromDom();
+            refreshAllRemoteReorderButtons();
         }
 
         function clearReorderIndicators() {
@@ -2249,6 +2791,9 @@
             });
             document.querySelectorAll('.cue-edit-drag.reorder-active').forEach(el => {
                 el.classList.remove('reorder-active');
+            });
+            cueGridRemote?.querySelectorAll('.remote-section-body.remote-section-drag-over').forEach(el => {
+                el.classList.remove('remote-section-drag-over');
             });
             cueGridRemote?.classList.remove('drag-active');
             document.body.classList.remove('remote-reorder-active');
@@ -2280,6 +2825,18 @@
             if (!touchReorderGhostEl) return;
             touchReorderGhostEl.style.left = `${clientX - sourceRect.width / 2}px`;
             touchReorderGhostEl.style.top = `${clientY - sourceRect.height / 2}px`;
+        }
+
+        function findSectionBodyAtPoint(clientX, clientY) {
+            const bodies = [...cueGridRemote.querySelectorAll('.remote-section-body')];
+            for (const body of bodies) {
+                const rect = body.getBoundingClientRect();
+                if (clientX >= rect.left && clientX <= rect.right
+                    && clientY >= rect.top && clientY <= rect.bottom) {
+                    return body;
+                }
+            }
+            return null;
         }
 
         /** iOS-safe drop target: compare touch point to card rects (elementFromPoint fails under finger). */
@@ -2315,9 +2872,16 @@
 
         function finishTouchReorder() {
             if (!touchReorderState) return;
-            const { cueId, targetCard, insertAfter } = touchReorderState;
+            const { cueId, targetCard, insertAfter, clientX, clientY } = touchReorderState;
             if (targetCard && targetCard.dataset.cueId !== cueId) {
                 performCueReorder(cueId, targetCard.dataset.cueId, insertAfter);
+            } else if (clientX != null && clientY != null) {
+                const sectionBody = findSectionBodyAtPoint(clientX, clientY);
+                const draggedCard = cueGridRemote.querySelector(`.cue-edit-card[data-cue-id="${cueId}"]`);
+                if (sectionBody && draggedCard) {
+                    sectionBody.appendChild(draggedCard);
+                    persistRemoteLayoutFromDom();
+                }
             }
             touchReorderState = null;
             draggedEditCueId = null;
@@ -2348,6 +2912,15 @@
                 const hit = updateReorderIndicatorAtPoint(t.clientX, t.clientY, card.dataset.cueId);
                 touchReorderState.targetCard = hit?.targetCard || null;
                 touchReorderState.insertAfter = hit?.insertAfter ?? false;
+                touchReorderState.clientX = t.clientX;
+                touchReorderState.clientY = t.clientY;
+                const sectionBody = findSectionBodyAtPoint(t.clientX, t.clientY);
+                cueGridRemote.querySelectorAll('.remote-section-body').forEach(el => {
+                    el.classList.remove('remote-section-drag-over');
+                });
+                if (sectionBody && !hit) {
+                    sectionBody.classList.add('remote-section-drag-over');
+                }
             };
 
             const onDocumentTouchEnd = () => {
@@ -2407,13 +2980,19 @@
                 draggedEditCueId = card.dataset.cueId;
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('text/plain', draggedEditCueId);
-                card.classList.add('dragging');
+                e.dataTransfer.setData('application/x-accompaniment-cue-ids', draggedEditCueId);
+                card.classList.add('dragging', 'dragging-cue-group');
                 cueGridRemote.classList.add('drag-active');
             });
             dragHandle.addEventListener('dragend', (e) => {
                 e.stopPropagation();
-                card.classList.remove('dragging');
+                document.querySelectorAll('.cue-edit-card.dragging, .cue-edit-card.dragging-cue-group').forEach(el => {
+                    el.classList.remove('dragging', 'dragging-cue-group');
+                });
                 cueGridRemote.classList.remove('drag-active');
+                cueGridRemote.querySelectorAll('.remote-section-body.remote-section-drag-over').forEach(el => {
+                    el.classList.remove('remote-section-drag-over');
+                });
                 document.querySelectorAll('.cue-edit-card').forEach(el => {
                     el.classList.remove('drag-insert-before', 'drag-insert-after');
                 });
@@ -2421,7 +3000,9 @@
             });
             card.addEventListener('dragover', (e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 if (!draggedEditCueId || card.dataset.cueId === draggedEditCueId) return;
+                if (card.classList.contains('dragging-cue-group')) return;
                 document.querySelectorAll('.cue-edit-card').forEach(el => {
                     el.classList.remove('drag-insert-before', 'drag-insert-after');
                 });
@@ -2441,7 +3022,7 @@
             card.addEventListener('drop', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const fromId = e.dataTransfer.getData('text/plain');
+                const fromId = e.dataTransfer.getData('text/plain') || draggedEditCueId;
                 const toId = card.dataset.cueId;
                 if (!fromId || fromId === toId) return;
                 const rect = card.getBoundingClientRect();

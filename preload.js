@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveCuesToMain: (cues) => ipcRenderer.invoke('save-cues', cues),
   addOrUpdateCue: (cueData) => ipcRenderer.invoke('add-or-update-cue', cueData),
   deleteCue: (cueId) => ipcRenderer.invoke('delete-cue', cueId),
+  deleteCues: (cueIds) => ipcRenderer.invoke('delete-cues', cueIds),
   getAppConfig: () => ipcRenderer.invoke('get-initial-config'),
   saveAppConfig: (config) => ipcRenderer.invoke('save-app-config', config),
   getAudioOutputDevices: () => ipcRenderer.invoke('get-audio-output-devices'),

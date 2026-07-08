@@ -1,10 +1,198 @@
 #cueGridContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-content: start;
+    margin-top: 0;
+    flex-grow: 1;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.cue-section-block {
+    width: 100%;
+}
+
+.cue-section-block::before {
+    display: none;
+    content: none;
+}
+
+.cue-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    margin-bottom: 8px;
+    min-height: 0;
+    user-select: none;
+    cursor: pointer;
+    border-radius: 3px;
+    background: #505050;
+    border: 1px solid #666666;
+    transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+#appContainer.show-mode .cue-section-header {
+    background: #585858;
+    border-color: #707070;
+}
+
+.cue-section-block.collapsed .cue-section-header {
+    background: #454545;
+    border-color: #5a5a5a;
+    margin-bottom: 0;
+    opacity: 0.92;
+}
+
+#appContainer.show-mode .cue-section-block.collapsed .cue-section-header {
+    background: #4e4e4e;
+    border-color: #626262;
+}
+
+.cue-section-header:hover {
+    background: #5a5a5a;
+    border-color: #777777;
+}
+
+#appContainer.show-mode .cue-section-header:hover {
+    background: #636363;
+    border-color: #848484;
+}
+
+.cue-section-block.collapsed .cue-section-header:hover {
+    background: #4e4e4e;
+}
+
+#appContainer.show-mode .cue-section-block.collapsed .cue-section-header:hover {
+    background: #565656;
+}
+
+.cue-section-toggle {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 0.75em;
+    line-height: 1;
+}
+
+.cue-section-drag-handle {
+    cursor: grab;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.8em;
+    padding: 0 2px;
+    user-select: none;
+    line-height: 1;
+    letter-spacing: -0.12em;
+}
+
+.cue-section-drag-handle:active {
+    cursor: grabbing;
+}
+
+.cue-section-block.dragging-section {
+    opacity: 0.55;
+}
+
+.cue-section-block.section-insert-before {
+    box-shadow: inset 0 3px 0 0 rgba(52, 152, 219, 0.85);
+}
+
+.cue-section-block.section-insert-after {
+    box-shadow: inset 0 -3px 0 0 rgba(52, 152, 219, 0.85);
+}
+
+#cueGridContainer.section-drag-active .cue-section-body {
+    pointer-events: none;
+}
+
+.cue-section-title {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    font-size: 0.76em;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.92);
+    transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.cue-section-block.collapsed .cue-section-title {
+    color: rgba(255, 255, 255, 0.72);
+    font-weight: 500;
+}
+
+input.cue-section-title {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    padding: 3px 8px;
+    color: inherit;
+    font: inherit;
+    letter-spacing: 0.04em;
+    text-transform: none;
+}
+
+.cue-section-delete {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.65);
+    border-radius: 4px;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.cue-section-body {
     display: grid;
     grid-template-columns: repeat(auto-fill, 150px);
     gap: 15px;
     align-content: start;
-    margin-top: 0; /* mainContent has padding */
-    flex-grow: 1;
+    align-items: start;
+    min-height: 40px;
+}
+
+.cue-section-body.cue-section-drag-over {
+    background: rgba(52, 152, 219, 0.1);
+    outline: 1px dashed rgba(52, 152, 219, 0.45);
+    outline-offset: -1px;
+    border-radius: 6px;
+}
+
+.cue-section-block.collapsed .cue-section-body {
+    display: none;
+}
+
+.cue-section-drop-hint {
+    grid-column: 1 / -1;
+    font-size: 0.78em;
+    color: rgba(255, 255, 255, 0.42);
+    padding: 10px 8px;
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    text-align: center;
+}
+
+.cue-section-body:has(.cue-wrapper) .cue-section-drop-hint {
+    display: none;
+}
+
+.cue-section-add-btn {
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px dashed rgba(255, 255, 255, 0.22);
+    color: rgba(255, 255, 255, 0.75);
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.85em;
+}
+
+.cue-section-add-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .cue-wrapper {
@@ -12,8 +200,35 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    height: 100%;
-    gap: 6px;
+    aspect-ratio: 1 / 1;
+    height: auto;
+    align-self: start;
+    gap: 0;
+}
+
+.cue-wrapper.draggable-cue-wrapper {
+    cursor: grab;
+}
+
+.cue-wrapper.draggable-cue-wrapper:active {
+    cursor: grabbing;
+}
+
+.cue-select-checkbox {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 12;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--button-primary-bg, #3498db);
+}
+
+.cue-wrapper.cue-selected .cue-button {
+    outline: 2px solid var(--button-primary-bg, #3498db);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.28);
 }
 
 .cue-interactive-container {
@@ -22,6 +237,8 @@
     gap: 6px;
     width: 100%;
     height: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .cue-button {
@@ -30,7 +247,6 @@
     border: 1px solid var(--button-secondary-border);
     border-radius: var(--border-radius);
     cursor: pointer;
-    aspect-ratio: 1 / 1;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -41,6 +257,8 @@
     box-sizing: border-box;
     flex: 1 1 auto;
     min-width: 0;
+    min-height: 0;
+    height: 100%;
 }
 
 .cue-button:hover {
@@ -256,16 +474,11 @@
     color: var(--text-secondary-color);
 }
 
-.cue-button.has-button-waveform {
-    aspect-ratio: auto;
-    min-height: 150px;
-}
-
 .cue-button-waveform-wrap {
     flex-shrink: 0;
     width: calc(100% + 20px);
-    height: 36px;
-    margin: 4px -10px -10px;
+    height: 28px;
+    margin: 2px -10px -10px;
     overflow: hidden;
     background: rgba(0, 0, 0, 0.35);
     border-top: 1px solid rgba(255, 255, 255, 0.12);
@@ -472,6 +685,11 @@
 .cue-wrapper.dragging-cue {
     opacity: 0.5;
     cursor: grabbing !important;
+}
+
+.cue-wrapper.dragging-cue-group:not(.dragging-cue) {
+    opacity: 0.45;
+    pointer-events: none;
 }
 
 .cue-wrapper.dragging-cue .cue-button {

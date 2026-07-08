@@ -18,22 +18,22 @@ function setupGlobalDragDropListeners() {
 }
 
 function handleDragOver(event) {
+    if (event.dataTransfer?.types?.includes('application/x-accompaniment-cue-ids')
+        || event.dataTransfer?.types?.includes('application/x-accompaniment-section-id')
+        || document.querySelector('.cue-wrapper.dragging-cue, .cue-wrapper.dragging-cue-group, .cue-edit-card.dragging, .cue-section-block.dragging-section')) {
+        return;
+    }
     event.preventDefault();
     event.stopPropagation();
-    // Optionally, provide visual feedback on the current element being hovered over
-    // e.g., event.target.classList.add('drag-over-active');
-    // However, ui.js might handle more specific drop-target highlighting.
-    // General indication that a drag is in progress on the window can be useful.
-    document.body.classList.add('app-drag-over'); 
+    document.body.classList.add('app-drag-over');
 }
 
 function handleDragLeave(event) {
+    if (document.querySelector('.cue-wrapper.dragging-cue, .cue-wrapper.dragging-cue-group, .cue-edit-card.dragging, .cue-section-block.dragging-section')) {
+        return;
+    }
     event.preventDefault();
     event.stopPropagation();
-    // Optionally, remove visual feedback
-    // e.g., event.target.classList.remove('drag-over-active');
-    // Check if the leave event is not just moving to a child element
-    // More robust check: if relatedTarget is null or not within the document body
     if (event.relatedTarget === null || 
         !document.body.contains(event.relatedTarget) || 
         event.relatedTarget === document.documentElement) {
@@ -42,6 +42,11 @@ function handleDragLeave(event) {
 }
 
 function handleDrop(event) {
+    if (event.dataTransfer?.types?.includes('application/x-accompaniment-cue-ids')
+        || event.dataTransfer?.types?.includes('application/x-accompaniment-section-id')
+        || document.querySelector('.cue-wrapper.dragging-cue, .cue-wrapper.dragging-cue-group, .cue-edit-card.dragging, .cue-section-block.dragging-section')) {
+        return;
+    }
     event.preventDefault();
     event.stopPropagation();
     document.body.classList.remove('app-drag-over');

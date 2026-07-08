@@ -5,12 +5,27 @@ const { app } = require('electron'); // Required for app.getPath('userData')
 const { v4: uuidv4 } = require('uuid');
 const logger = require('./utils/logger');
 const { getAudioFileDuration } = require('./utils/audioFileUtils');
+const {
+  migrateToV2,
+  repairWorkspace,
+  getOrderedCueIds,
+  removeCueFromLayout,
+  removeSectionFromLayout,
+  insertCueInLayout,
+  appendCueToDefaultSection,
+  createDefaultSection,
+  sanitizeSectionPatch,
+  sanitizeSection,
+  findSectionIdForLayoutIndex
+} = require('./cueLayoutUtils');
 // Mixer integration removed as per requirements
 
 const CUES_FILE_NAME = 'cues.json';
 let currentCuesFilePath = path.join(app.getPath('userData'), CUES_FILE_NAME); // Default path
 
 let cues = [];
+let sections = [];
+let layout = [];
 let websocketServerInstance; // To notify on updates
 let httpServerInstance; // Added: To notify remote HTTP clients
 let mainWindowRef; // To store mainWindow reference for IPC
@@ -40,45 +55,80 @@ function setCuesDirectory(dirPath) {
 
 async function loadCuesFromFile() {
   try {
-    // Check if file exists
     try {
       await fsPromises.access(currentCuesFilePath);
     } catch (e) {
-      // File doesn't exist
-      cues = [];
+      const empty = migrateToV2([]);
+      cues = empty.cues;
+      sections = empty.sections;
+      layout = empty.layout;
       logger.info(`No cues file found at ${currentCuesFilePath}, starting fresh. Save explicitly if needed.`);
-      return cues;
+      return getWorkspaceSnapshot();
     }
 
     const data = await fsPromises.readFile(currentCuesFilePath, 'utf-8');
-    let loadedCues = JSON.parse(data);
-    if (Array.isArray(loadedCues)) {
-      cues = loadedCues.map(cue => {
-        const migratedCue = {
-          ...cue,
-          // Ensure ducking properties exist with defaults
-          enableDucking: cue.enableDucking !== undefined ? cue.enableDucking : false,
-          duckingLevel: cue.duckingLevel !== undefined ? cue.duckingLevel : 80,
-          isDuckingTrigger: cue.isDuckingTrigger !== undefined ? cue.isDuckingTrigger : false,
-        };
-        return migratedCue;
-      });
-
-      cues.forEach(cue => {
-        if (cue.hasOwnProperty('x32Trigger')) {
-          logger.info(`CueManager: Removing obsolete 'x32Trigger' from cue: ${cue.id}`);
-          delete cue.x32Trigger;
-        }
-      });
-    } else {
-      cues = [];
-    }
+    const parsed = JSON.parse(data);
+    const wasV1Array = Array.isArray(parsed);
+    const workspace = migrateToV2(parsed);
+    cues = workspace.cues.map(cue => {
+      const migratedCue = {
+        ...cue,
+        enableDucking: cue.enableDucking !== undefined ? cue.enableDucking : false,
+        duckingLevel: cue.duckingLevel !== undefined ? cue.duckingLevel : 80,
+        isDuckingTrigger: cue.isDuckingTrigger !== undefined ? cue.isDuckingTrigger : false,
+      };
+      if (migratedCue.hasOwnProperty('x32Trigger')) {
+        delete migratedCue.x32Trigger;
+      }
+      return migratedCue;
+    });
+    sections = workspace.sections;
+    layout = repairWorkspace({ ...workspace, cues }).layout;
     logger.info('Cues loaded from file:', currentCuesFilePath);
+    if (wasV1Array) {
+      logger.info('CueManager: Migrated v1 cues array to v2 workspace format.');
+      await saveCuesToFile(true);
+    }
   } catch (error) {
     logger.error('Error loading cues from file:', currentCuesFilePath, error);
-    cues = [];
+    const empty = migrateToV2([]);
+    cues = empty.cues;
+    sections = empty.sections;
+    layout = empty.layout;
   }
-  return cues;
+  return getWorkspaceSnapshot();
+}
+
+function getWorkspaceSnapshot() {
+  return {
+    version: 2,
+    cues: getCues(),
+    sections: sections.map(section => ({ ...section })),
+    layout: layout.map(entry => ({ ...entry }))
+  };
+}
+
+function applyWorkspaceSnapshot(snapshot) {
+  if (!snapshot) return;
+  if (Array.isArray(snapshot)) {
+    const workspace = migrateToV2(snapshot);
+    cues = workspace.cues;
+    sections = workspace.sections;
+    layout = workspace.layout;
+    return;
+  }
+  const workspace = repairWorkspace(snapshot);
+  cues = workspace.cues;
+  sections = workspace.sections;
+  layout = workspace.layout;
+}
+
+function getSections() {
+  return sections.map(section => ({ ...section }));
+}
+
+function getLayout() {
+  return layout.map(entry => ({ ...entry }));
 }
 
 async function saveCuesToFile(silent = false) {
@@ -89,26 +139,29 @@ async function saveCuesToFile(silent = false) {
   // --- DIAGNOSTIC LOG --- 
   logger.info('CueManager: Attempting to save cues to path:', currentCuesFilePath, 'Silent mode:', silent);
   try {
-    await fsPromises.writeFile(currentCuesFilePath, JSON.stringify(cues, null, 2));
+    await fsPromises.writeFile(currentCuesFilePath, JSON.stringify(getWorkspaceSnapshot(), null, 2));
     logger.info('Cues saved to file:', currentCuesFilePath);
 
-    if (!silent) { // Only broadcast if not in silent mode
+    if (!silent) {
       if (websocketServerInstance) {
         websocketServerInstance.broadcastCuesListUpdate(cues);
       }
-      // Added: Broadcast to HTTP remotes
       if (httpServerInstance && typeof httpServerInstance.broadcastToRemotes === 'function') {
+        const workspace = getWorkspaceSnapshot();
         const payload = typeof httpServerInstance.formatCuesForRemote === 'function'
           ? httpServerInstance.formatCuesForRemote(cues)
           : cues;
-        httpServerInstance.broadcastToRemotes({ type: 'all_cues', payload });
+        httpServerInstance.broadcastToRemotes({
+          type: 'all_cues',
+          payload,
+          sections: workspace.sections,
+          layout: workspace.layout
+        });
         logger.info('CueManager: Broadcasted all_cues to HTTP remotes.');
       }
-      // Also, if not silent and mainWindowRef exists, inform the renderer that cues were updated.
-      // This covers general saves. Specific handlers in ipcHandlers might also send this.
       if (mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
         logger.info('CueManager (saveCuesToFile): Non-silent save, sending cues-updated-from-main to renderer.');
-        mainWindowRef.webContents.send('cues-updated-from-main', getCues());
+        mainWindowRef.webContents.send('cues-updated-from-main', getWorkspaceSnapshot());
       }
     }
     return true;
@@ -131,18 +184,104 @@ function getCueById(cueId) {
 
 async function setCues(updatedCues) {
   cues = updatedCues;
+  const orderedIds = getOrderedCueIds(layout);
+  const newIds = updatedCues.map(cue => cue.id);
+  if (orderedIds.join(',') !== newIds.join(',')) {
+    layout = repairWorkspace({
+      version: 2,
+      sections,
+      cues,
+      layout: layout.filter(entry => entry.type === 'section').concat(
+        newIds.map(cueId => {
+          const existing = layout.find(entry => entry.type === 'cue' && entry.cueId === cueId);
+          return {
+            type: 'cue',
+            cueId,
+            sectionId: existing?.sectionId || sections[0]?.id
+          };
+        })
+      )
+    }).layout;
+  }
   const success = await saveCuesToFile();
   if (!success) {
     logger.error("Failed to save cues after setCues.");
   }
 }
 
+async function setWorkspace({ cues: nextCues, sections: nextSections, layout: nextLayout }) {
+  if (Array.isArray(nextCues)) cues = nextCues;
+  if (Array.isArray(nextSections)) sections = nextSections.map(sanitizeSection);
+  if (Array.isArray(nextLayout)) {
+    layout = repairWorkspace({
+      version: 2,
+      sections,
+      cues,
+      layout: nextLayout
+    }).layout;
+  }
+  const success = await saveCuesToFile();
+  if (!success) {
+    logger.error('Failed to save workspace after setWorkspace.');
+  }
+  return success;
+}
+
+async function addSection(title = 'New Section', afterSectionId = null) {
+  const section = createDefaultSection(title);
+  if (!afterSectionId) {
+    sections.push(section);
+    layout.push({ type: 'section', sectionId: section.id });
+  } else {
+    const index = sections.findIndex(item => item.id === afterSectionId);
+    const insertAt = index >= 0 ? index + 1 : sections.length;
+    sections.splice(insertAt, 0, section);
+    const layoutIndex = layout.findIndex(entry => entry.type === 'section' && entry.sectionId === afterSectionId);
+    if (layoutIndex >= 0) {
+      layout.splice(layoutIndex + 1, 0, { type: 'section', sectionId: section.id });
+    } else {
+      layout.push({ type: 'section', sectionId: section.id });
+    }
+  }
+  await saveCuesToFile();
+  return section;
+}
+
+async function updateSection(sectionId, patch = {}) {
+  const index = sections.findIndex(section => section.id === sectionId);
+  if (index === -1) return false;
+  sections[index] = { ...sections[index], ...sanitizeSectionPatch(patch) };
+  await saveCuesToFile();
+  return true;
+}
+
+async function deleteSection(sectionId) {
+  if (sections.length <= 1) return false;
+  const fallbackSection = sections.find(section => section.id !== sectionId);
+  if (!fallbackSection) return false;
+
+  layout = layout.map(entry => {
+    if (entry.type === 'cue' && (entry.sectionId === sectionId || findSectionIdForLayoutIndex(layout, layout.indexOf(entry)) === sectionId)) {
+      return { ...entry, sectionId: fallbackSection.id };
+    }
+    return entry;
+  });
+  layout = removeSectionFromLayout(layout, sectionId);
+  sections = sections.filter(section => section.id !== sectionId);
+  layout = repairWorkspace({ version: 2, sections, cues, layout }).layout;
+  await saveCuesToFile();
+  return true;
+}
+
 // Resets the in-memory cues to an empty array. Does NOT automatically save.
 async function resetCues() {
   logger.info('CueManager: resetCues() called. Current cues length:', cues.length);
-  cues = [];
+  const empty = migrateToV2([]);
+  cues = empty.cues;
+  sections = empty.sections;
+  layout = empty.layout;
   logger.info('CueManager: Cues array now empty. Length:', cues.length);
-  await saveCuesToFile(); // This will save an empty array and also broadcast via its own logic
+  await saveCuesToFile();
   logger.info('CueManager: After saveCuesToFile in resetCues.');
 }
 
@@ -203,7 +342,7 @@ async function initialize(wssInstance, mainWin, httpServerRef) {
 
     if (mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
       logger.info("CueManager Init: Sending 'cues-updated-from-main' to renderer due to duration processing.");
-      mainWindowRef.webContents.send('cues-updated-from-main', getCues());
+      mainWindowRef.webContents.send('cues-updated-from-main', getWorkspaceSnapshot());
     }
   } else {
     logger.info("CueManager Init: No durations needed updating during initialization.");
@@ -214,12 +353,35 @@ async function deleteCue(cueId) {
   const initialLength = cues.length;
   cues = cues.filter(cue => cue.id !== cueId);
   if (cues.length < initialLength) {
-    await saveCuesToFile(); // This will also broadcast the update
+    layout = removeCueFromLayout(layout, cueId);
+    await saveCuesToFile();
     logger.info(`Cue with ID ${cueId} deleted.`);
     return true;
   }
   logger.info(`Cue with ID ${cueId} not found for deletion.`);
   return false;
+}
+
+async function deleteCues(cueIds) {
+  if (!Array.isArray(cueIds) || cueIds.length === 0) {
+    return [];
+  }
+
+  const idSet = new Set(cueIds.filter(Boolean));
+  const deleted = cues.filter(cue => idSet.has(cue.id)).map(cue => cue.id);
+  if (deleted.length === 0) {
+    return [];
+  }
+
+  const deletedSet = new Set(deleted);
+  cues = cues.filter(cue => !deletedSet.has(cue.id));
+  deleted.forEach(cueId => {
+    layout = removeCueFromLayout(layout, cueId);
+  });
+
+  await saveCuesToFile();
+  logger.info(`Deleted ${deleted.length} cue(s).`);
+  return deleted;
 }
 
 // New function to update known duration of a cue
@@ -236,7 +398,7 @@ async function updateCueKnownDuration(cueId, duration) {
       if (success) { // Check if save was successful
         if (mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
           logger.info(`CueManager (updateCueKnownDuration): Sending 'cues-updated-from-main' to renderer.`);
-          mainWindowRef.webContents.send('cues-updated-from-main', getCues());
+          mainWindowRef.webContents.send('cues-updated-from-main', getWorkspaceSnapshot());
         }
       }
       return true;
@@ -273,43 +435,45 @@ function triggerCueById(cueId, source = 'unknown') {
 
 async function addOrUpdateProcessedCue(cueData, workspacePath) {
   logger.info(`[CueManager] addOrUpdateProcessedCue received raw cueData. ID: ${cueData.id}, Name: ${cueData.name}`);
-  // ... (logging kept brief here for clarity, assumed unchanged in logic) ...
+  const layoutOptions = cueData._layoutOptions || null;
+  const cleanCueData = { ...cueData };
+  delete cleanCueData._layoutOptions;
 
-  const cueId = cueData.id || generateUUID(); // Generate UUID if not provided
+  const cueId = cleanCueData.id || generateUUID();
   const existingCueIndex = cues.findIndex(c => c.id === cueId);
   let isNew = true;
   if (existingCueIndex !== -1) {
     isNew = false;
   }
 
-  const effectiveRetriggerBehavior = cueData.retriggerBehavior || 'restart';
+  const effectiveRetriggerBehavior = cleanCueData.retriggerBehavior || 'restart';
 
   const baseCue = {
     id: cueId,
-    name: cueData.name || 'Unnamed Cue',
-    type: cueData.type || 'single_file',
-    filePath: cueData.filePath || null,
-    volume: cueData.volume !== undefined ? cueData.volume : 1,
-    fadeInTime: cueData.fadeInTime || 0,
-    fadeOutTime: cueData.fadeOutTime || 0,
-    loop: cueData.loop || false,
+    name: cleanCueData.name || 'Unnamed Cue',
+    type: cleanCueData.type || 'single_file',
+    filePath: cleanCueData.filePath || null,
+    volume: cleanCueData.volume !== undefined ? cleanCueData.volume : 1,
+    fadeInTime: cleanCueData.fadeInTime || 0,
+    fadeOutTime: cleanCueData.fadeOutTime || 0,
+    loop: cleanCueData.loop || false,
     retriggerBehavior: effectiveRetriggerBehavior,
     retriggerAction: effectiveRetriggerBehavior,
     retriggerActionCompanion: effectiveRetriggerBehavior,
-    knownDuration: cueData.knownDuration || 0,
-    playlistItems: cueData.playlistItems || [],
-    shuffle: cueData.shuffle || false,
-    repeatOne: cueData.repeatOne || false,
-    playlistPlayMode: cueData.playlistPlayMode || 'continue',
-    trimStartTime: (cueData.trimStartTime !== undefined && cueData.trimStartTime !== null) ? cueData.trimStartTime : 0,
-    trimEndTime: (cueData.trimEndTime !== undefined && cueData.trimEndTime !== null) ? cueData.trimEndTime : undefined,
-    enableDucking: cueData.enableDucking !== undefined ? cueData.enableDucking : false,
-    duckingLevel: cueData.duckingLevel !== undefined ? cueData.duckingLevel : 80,
-    isDuckingTrigger: cueData.isDuckingTrigger !== undefined ? cueData.isDuckingTrigger : false,
-    buttonColor: cueData.buttonColor || null,
-    showButtonWaveform: cueData.showButtonWaveform === true
+    knownDuration: cleanCueData.knownDuration || 0,
+    playlistItems: cleanCueData.playlistItems || [],
+    shuffle: cleanCueData.shuffle || false,
+    repeatOne: cleanCueData.repeatOne || false,
+    playlistPlayMode: cleanCueData.playlistPlayMode || 'continue',
+    trimStartTime: (cleanCueData.trimStartTime !== undefined && cleanCueData.trimStartTime !== null) ? cleanCueData.trimStartTime : 0,
+    trimEndTime: (cleanCueData.trimEndTime !== undefined && cleanCueData.trimEndTime !== null) ? cleanCueData.trimEndTime : undefined,
+    enableDucking: cleanCueData.enableDucking !== undefined ? cleanCueData.enableDucking : false,
+    duckingLevel: cleanCueData.duckingLevel !== undefined ? cleanCueData.duckingLevel : 80,
+    isDuckingTrigger: cleanCueData.isDuckingTrigger !== undefined ? cleanCueData.isDuckingTrigger : false,
+    buttonColor: cleanCueData.buttonColor || null,
+    showButtonWaveform: cleanCueData.showButtonWaveform === true
         ? true
-        : (cueData.showButtonWaveform === false ? false : null),
+        : (cleanCueData.showButtonWaveform === false ? false : null),
   };
 
   // Ensure playlist items have unique IDs and knownDurations if not present
@@ -364,20 +528,24 @@ async function addOrUpdateProcessedCue(cueData, workspacePath) {
 
   if (isNew) {
     cues.push(baseCue);
+    if (layoutOptions?.sectionId) {
+      layout = insertCueInLayout(
+        layout,
+        cueId,
+        layoutOptions.sectionId,
+        layoutOptions.insertBeforeCueId || null
+      );
+    } else {
+      layout = appendCueToDefaultSection(layout, sections, cueId);
+    }
     logger.info(`[CueManager] Added new cue.`);
   } else {
     cues[existingCueIndex] = baseCue;
     logger.info(`[CueManager] Updated existing cue.`);
   }
 
-  // Save and notify (unless silentUpdate is true)
+  // Save and notify renderer/remotes with full workspace snapshot (sections + layout).
   await saveCuesToFile();
-
-  // If durations were detected, send update to renderer
-  if (durationsDetected && mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
-    logger.info(`CueManager: Sending 'cues-updated-from-main' to renderer due to duration detection.`);
-    mainWindowRef.webContents.send('cues-updated-from-main', getCues());
-  }
 
   // Return a copy of the processed cue
   const finalCueIndex = isNew ? cues.length - 1 : existingCueIndex;
@@ -424,7 +592,7 @@ async function updateCueItemDuration(cueId, duration, playlistItemId = null) {
       if (success) { // Check if save was successful
         if (mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
           logger.info(`CueManager (updateCueItemDuration): Sending 'cues-updated-from-main' to renderer.`);
-          mainWindowRef.webContents.send('cues-updated-from-main', getCues());
+          mainWindowRef.webContents.send('cues-updated-from-main', getWorkspaceSnapshot());
         }
       }
       return true;
@@ -450,11 +618,20 @@ module.exports = {
   saveCuesToFile,
   getCues,
   getCueById,
+  getSections,
+  getLayout,
+  getWorkspaceSnapshot,
+  applyWorkspaceSnapshot,
   setCues,
+  setWorkspace,
+  addSection,
+  updateSection,
+  deleteSection,
   addOrUpdateProcessedCue,
   resetCues,
   generateUUID,
   deleteCue,
+  deleteCues,
   updateCueKnownDuration,
   updateCueItemDuration,
   triggerCueById,

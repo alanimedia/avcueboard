@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.3
+
+### Added
+- Collapsible **cue sections** on Electron and web remote with v2 workspace layout (`sections` + `layout` in `cues.json`)
+- Section drag reorder in edit mode (all cues in a section move together); full header click to expand/collapse
+- Multi-select cues in edit mode (Ctrl/Cmd+click, Ctrl/Cmd+A) with bulk delete via toolbar or Delete/Backspace
+- Multi-select drag: moving one selected cue moves the whole selection between sections
+- Drag existing cues and new file drops into specific sections (Electron + remote)
+- `cueGridSections.js` and `cueLayoutUtils.js` for section UI and layout repair/migration
+
+### Changed
+- Section headers use a single light grey bar (no separate dark divider line); styling matched on Electron and remote
+- Section titles editable only in persisted edit mode (not show/playback mode)
+- Remote `reorder_cues` accepts `layout` payloads; reorder buttons bind after DOM insert
+
+### Fixed
+- Electron grid blank after sections refactor (duplicate exports / syntax error in `cueGrid.js`)
+- Adding cues to a section no longer collapses layout to a single "Cues" section (broadcast full workspace snapshot)
+- Global file drop handler no longer intercepts in-grid cue drags
+- Remote invalid reorder request when saving section layout from web UI
+
 ## 1.5.2
 
 ### Added

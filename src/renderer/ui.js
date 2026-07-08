@@ -11,6 +11,7 @@ import * as modals from './ui/modals.js';
 import * as appConfigUI from './ui/appConfigUI.js'; // Import new module
 import * as waveformControls from './ui/waveformControls.js'; // Ensure this is imported if used by init
 import * as mainWaveformPanel from './ui/mainWaveformPanel.js';
+import { getSectionIdFromDropTarget } from './ui/cueGridSections.js';
 
 // Module references that will be initialized
 let cueStoreModule; // Renamed for clarity, will hold the passed cueStore module
@@ -30,6 +31,7 @@ let appContainer;
 let modeToggleBtn;
 let stopAllButton;
 let crossfadeToggleBtn;
+let deleteSelectedCuesBtn;
 
 // Crossfade state
 let crossfadeEnabled = false;
@@ -108,7 +110,9 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
 
     const uiCoreInterface = {
         isEditMode,
+        isPersistedEditMode,
         openPropertiesSidebar: propertiesSidebar.openPropertiesSidebar,
+        hidePropertiesSidebar: propertiesSidebar.hidePropertiesSidebar,
         getCurrentAppConfig: appConfigUIModuleInternal.getCurrentAppConfig,
         openNewCueModal: modalsModule.openNewCueModal, 
         showMultipleFilesDropModal: modalsModule.showMultipleFilesDropModal,
@@ -121,6 +125,10 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
 
     // Pass the *assigned* modules to sub-module initializers
     cueGrid.initCueGrid(cueStoreModule, audioControllerModule, dragDropHandlerModule, uiCoreInterface);
+    deleteSelectedCuesBtn = document.getElementById('deleteSelectedCuesBtn');
+    if (typeof cueGrid.setDeleteSelectedButton === 'function') {
+        cueGrid.setDeleteSelectedButton(deleteSelectedCuesBtn);
+    }
     configSidebar.initConfigSidebar();
     sidebars.initSidebars(); // Initialize sidebars module for config sidebar toggle functionality
 
@@ -168,6 +176,7 @@ function cacheCoreDOMElements() {
     modeToggleBtn = document.getElementById('modeToggleBtn');
     stopAllButton = document.getElementById('stopAllButton');
     crossfadeToggleBtn = document.getElementById('crossfadeToggleBtn');
+    deleteSelectedCuesBtn = document.getElementById('deleteSelectedCuesBtn');
 
     // Modal element caching is now handled by modals.js module
     // App Config Sidebar element caching is now handled by appConfigUI.js module
@@ -175,6 +184,20 @@ function cacheCoreDOMElements() {
 
 function bindCoreEventListeners() {
     if (modeToggleBtn) modeToggleBtn.addEventListener('click', toggleMode);
+
+    if (deleteSelectedCuesBtn) {
+        deleteSelectedCuesBtn.addEventListener('click', () => {
+            if (typeof cueGrid.deleteSelectedCues === 'function') {
+                cueGrid.deleteSelectedCues();
+            }
+        });
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (typeof cueGrid.handleDeleteSelectedKeydown === 'function') {
+            cueGrid.handleDeleteSelectedKeydown(event);
+        }
+    });
 
     if (stopAllButton) {
         stopAllButton.addEventListener('click', () => {
@@ -232,6 +255,10 @@ function bindCoreEventListeners() {
     // App Config event listeners are now handled by appConfigUI.js module
 }
 
+function isPersistedEditMode() {
+    return currentMode === 'edit';
+}
+
 function getCurrentAppMode() {
     // If shift is pressed, temporarily toggle the mode.
     // Otherwise, use the persistent currentMode.
@@ -245,6 +272,9 @@ function toggleMode() {
     currentMode = (currentMode === 'edit') ? 'show' : 'edit';
     shiftKeyPressed = false; // Reset shift key on manual toggle
     updateModeUI();
+    if (cueGrid && typeof cueGrid.renderCues === 'function') {
+        cueGrid.renderCues();
+    }
 }
 
 function updateModeUI() {
@@ -254,6 +284,9 @@ function updateModeUI() {
     if (effectiveMode === 'show') {
         appContainer.classList.remove('edit-mode');
         appContainer.classList.add('show-mode');
+        if (typeof cueGrid.clearCueSelection === 'function') {
+            cueGrid.clearCueSelection();
+        }
         if (modeToggleBtn) {
             modeToggleBtn.classList.add('show-mode-active');
             modeToggleBtn.classList.remove('edit-mode-active');
@@ -277,6 +310,10 @@ function updateModeUI() {
         }
     }
     
+    if (typeof cueGrid.setDeleteSelectedButton === 'function') {
+        cueGrid.setDeleteSelectedButton(deleteSelectedCuesBtn);
+    }
+
     console.log(`UI Mode Updated: Effective mode is now ${effectiveMode}`);
 }
 
@@ -410,22 +447,25 @@ async function handleSingleFileDrop(filePath, dropTargetElement) {
 
     // 2. If not properties sidebar, check for general drop area to create a new cue
     if (dropTargetElement === mainDropArea ||
+        dropTargetElement?.closest?.('.cue-section-body') ||
+        dropTargetElement?.closest?.('.cue-section-header') ||
         (document.body.contains(dropTargetElement) &&
          (!propertiesSidebarDOM || !propertiesSidebarDOM.contains(dropTargetElement)) &&
          (!cueConfigModalDOM || !cueConfigModalDOM.contains(dropTargetElement)) &&
          (!multipleFilesDropModalDOM || !multipleFilesDropModalDOM.contains(dropTargetElement)))) {
-        console.log("UI Core (SingleDrop): Matched general drop area. Attempting to create cue..."); // New Log
+        console.log("UI Core (SingleDrop): Matched general drop area. Attempting to create cue...");
         try {
-            const activeAppConfig = appConfigUIModuleInternal.getCurrentAppConfig(); // Correctly get app config
+            const activeAppConfig = appConfigUIModuleInternal.getCurrentAppConfig();
             if (!activeAppConfig) {
                 console.error("UI Core (SingleDrop): App config not available!");
                 alert('Error: App configuration is not loaded. Cannot create cue.');
                 return;
             }
-            console.log("UI Core (SingleDrop): App config loaded:", activeAppConfig); // New Log
+            const targetSectionId = getSectionIdFromDropTarget(dropTargetElement);
+            console.log("UI Core (SingleDrop): App config loaded:", activeAppConfig);
 
             const cueId = await electronAPIForPreload.generateUUID();
-            console.log("UI Core (SingleDrop): Generated UUID:", cueId); // New Log
+            console.log("UI Core (SingleDrop): Generated UUID:", cueId);
 
             const fileName = filePath.split(/[\\\/]/).pop();
             const cueName = fileName.split('.').slice(0, -1).join('.') || 'New Cue';
@@ -438,14 +478,15 @@ async function handleSingleFileDrop(filePath, dropTargetElement) {
                 retriggerBehavior: activeAppConfig.defaultRetriggerBehavior,
                 shuffle: false, repeatOne: false, trimStartTime: null, trimEndTime: null,
             };
-            console.log("UI Core (SingleDrop): Prepared new cue data:", newCueData); // New Log
+            console.log("UI Core (SingleDrop): Prepared new cue data:", newCueData);
 
             if (!cueStoreModule) {
                 console.error('UI Core (handleSingleFileDrop): cueStoreModule is not initialized!');
                 alert('Error: Cue store not available. Cannot create cue.');
                 return;
             }
-            await cueStoreModule.addOrUpdateCue(newCueData);
+            const layoutOptions = targetSectionId ? { sectionId: targetSectionId } : null;
+            await cueStoreModule.addOrUpdateCue(newCueData, layoutOptions);
             console.log("UI Core (SingleDrop): Successfully called cueStoreModule.addOrUpdateCue. Cue should be created/updated.");
         } catch (error) {
             console.error('UI Core (SingleDrop): Error creating cue from drop:', error); // More detailed log
@@ -484,11 +525,14 @@ async function handleMultipleFileDrop(files, dropTargetElement) {
 
     // 2. If not properties sidebar, check for general drop area to show modal
     if (dropTargetElement === mainDropArea ||
+        dropTargetElement?.closest?.('.cue-section-body') ||
+        dropTargetElement?.closest?.('.cue-section-header') ||
         (document.body.contains(dropTargetElement) &&
          (!propertiesSidebarDOM || !propertiesSidebarDOM.contains(dropTargetElement)) &&
          (!cueConfigModalDOM || !cueConfigModalDOM.contains(dropTargetElement)) &&
          (!multipleFilesDropModalDOM || !multipleFilesDropModalDOM.contains(dropTargetElement)))) {
-        modalsModule.showMultipleFilesDropModal(files); // Show modal for multiple files
+        const targetSectionId = getSectionIdFromDropTarget(dropTargetElement);
+        modalsModule.showMultipleFilesDropModal(files, targetSectionId);
         console.log("UI Core (MultiDrop): Showed multiple files modal for general drop.");
     } else {
          // If not a general area, and not properties sidebar, try assignFilesToRelevantTarget
