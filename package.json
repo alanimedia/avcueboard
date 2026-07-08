@@ -23,11 +23,15 @@
     "waveform"
   ],
   "author": "Marcin Wardecki",
-  "homepage": "https://github.com/mko1989/acCompaniment/",
+  "homepage": "https://github.com/alanimedia/acCompanimentAlt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alanimedia/acCompanimentAlt.git"
+  },
   "email": "m.wardecki89@gmail.com",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^31.7.7",
+    "electron": "31.7.7",
     "electron-builder": "^24.13.3",
     "electron-rebuild": "^3.2.9"
   },
@@ -46,6 +50,13 @@
   "build": {
     "appId": "com.highpass.acCompaniment",
     "productName": "acCompaniment",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "alanimedia",
+        "repo": "acCompanimentAlt"
+      }
+    ],
     "mac": {
       "category": "public.app-category.music",
       "target": [
@@ -66,7 +77,12 @@
       }
     },
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "arm64"]
+        }
+      ],
       "icon": "assets/icons/icon.ico"
     },
     "linux": {
@@ -75,6 +91,10 @@
       "target": [
         {
           "target": "deb",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "AppImage",
           "arch": ["x64", "arm64"]
         }
       ],

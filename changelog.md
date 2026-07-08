@@ -2,6 +2,10 @@
 
 ## 1.5.7
 
+### Added
+- GitHub Actions release workflow building installers for Windows (x64/ARM64), macOS (universal), and Linux (deb/AppImage x64/ARM64)
+- GitHub Releases publish config for in-app auto-updates
+
 ### Changed
 - Companion WebSocket broadcasts cues in grid layout order with v2 sections/layout payload
 - Companion WebSocket supports seek, prepare seek, and live volume actions
