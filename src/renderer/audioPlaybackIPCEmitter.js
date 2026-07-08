@@ -69,11 +69,14 @@ function sendPlaybackTimeUpdate(cueId, soundInstance, playingState, currentItemN
 
     if (soundInstance && soundInstance.playing()) {
         currentTimeSec = soundInstance.seek() || 0;
-        // If sound.seek() hasn't caught up yet, use the last explicit seek position.
+        // After seek, Howler may briefly report a stale position; trust lastSeek only until playback catches up.
         if (playingState.lastSeekPosition != null) {
             const reported = currentTimeSec;
-            if (Math.abs(reported - playingState.lastSeekPosition) > 0.35) {
-                currentTimeSec = playingState.lastSeekPosition;
+            const seekPos = playingState.lastSeekPosition;
+            if (reported + 0.35 < seekPos) {
+                currentTimeSec = seekPos;
+            } else {
+                playingState.lastSeekPosition = null;
             }
         }
         // If fading, override status to 'fading', otherwise use override or 'playing'

@@ -315,11 +315,22 @@ function createLane(cue) {
             }, 600);
         };
 
+        const clearLaneUserSeeking = () => {
+            clearTimeout(lane.userSeekingTimeout);
+            lane.userSeekingTimeout = null;
+            lane.isUserSeeking = false;
+        };
+
         const releaseLaneUserSeeking = () => {
             clearTimeout(lane.userSeekingTimeout);
             lane.userSeekingTimeout = setTimeout(() => {
                 lane.isUserSeeking = false;
-            }, 150);
+            }, 80);
+        };
+
+        const resetLanePlayheadSync = () => {
+            lane.lastRawTime = -1;
+            lane.lastSyncAt = 0;
         };
 
         const seekAtClientX = (clientX, options = {}) => {
@@ -329,12 +340,18 @@ function createLane(cue) {
             const rect = bodyEl.getBoundingClientRect();
             if (!rect.width) return;
             const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-            markLaneUserSeeking();
+            if (!options.finalizeScrub) {
+                markLaneUserSeeking();
+            }
             lane.wavesurfer.seekTo(ratio);
             seekCueFn(cue.id, ratio * duration, {
                 ...options,
                 skipScrubMute: true
             });
+            if (options.finalizeScrub) {
+                resetLanePlayheadSync();
+                clearLaneUserSeeking();
+            }
         };
 
         let activePointerId = null;
@@ -346,6 +363,9 @@ function createLane(cue) {
             event.preventDefault();
             activePointerId = event.pointerId;
             markLaneUserSeeking();
+            if (prepareScrubFn) {
+                prepareScrubFn(cue.id);
+            }
             try {
                 bodyEl.setPointerCapture(event.pointerId);
             } catch (e) { /* ignore */ }
@@ -369,6 +389,10 @@ function createLane(cue) {
 
         bodyEl.addEventListener('pointerup', finishLanePointer);
         bodyEl.addEventListener('pointercancel', finishLanePointer);
+        bodyEl.addEventListener('lostpointercapture', (event) => {
+            if (event.pointerId !== activePointerId) return;
+            finishLanePointer(event);
+        });
 
         lane.wavesurfer.on('ready', () => {
             const duration = lane.wavesurfer.getDuration();

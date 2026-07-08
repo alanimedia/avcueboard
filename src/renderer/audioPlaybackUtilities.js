@@ -4,7 +4,7 @@
 import { log } from './audioPlaybackLogger.js';
 import { cleanupAllResources } from './audioPlaybackUtils.js';
 import { _cuePlaylistAtPosition } from './audioPlaybackPlaylist.js';
-import { scheduleTrimEndEnforcement } from './playbackTimeManager.js';
+import { scheduleTrimEndEnforcement, createTimeUpdateInterval } from './playbackTimeManager.js';
 
 const pendingSeekTimers = new Map();
 
@@ -28,6 +28,34 @@ function sendSeekPlaybackUpdate(cueId, playingState, sound, status, context) {
         currentItemName = playingState.originalPlaylistItems[playingState.currentPlaylistItemIndex].name || currentItemName;
     }
     sendPlaybackTimeUpdateRef(cueId, sound, playingState, currentItemName, status);
+}
+
+function getCurrentItemNameForState(cueId, playingState, context) {
+    const mainCue = playingState.cue || context.getGlobalCueByIdRef?.(cueId);
+    let currentItemName = mainCue?.name || 'Cue';
+    if (playingState.isPlaylist && playingState.originalPlaylistItems?.[playingState.currentPlaylistItemIndex]) {
+        currentItemName = playingState.originalPlaylistItems[playingState.currentPlaylistItemIndex].name || currentItemName;
+    }
+    return currentItemName;
+}
+
+function ensureTimeUpdateIntervalAfterSeek(cueId, playingState, sound, context) {
+    if (!sound?.playing() || playingState.isPaused) return;
+    if (context.playbackIntervals?.[cueId] || playingState.timeUpdateInterval) return;
+
+    const intervalContext = {
+        ...context,
+        sendPlaybackTimeUpdate: context.sendPlaybackTimeUpdateRef,
+        cueGridAPI: context.cueGridAPIRef,
+        getAppConfigFunc: context.getAppConfigFuncRef,
+    };
+    createTimeUpdateInterval(
+        cueId,
+        sound,
+        playingState,
+        getCurrentItemNameForState(cueId, playingState, context),
+        intervalContext
+    );
 }
 
 export function setCueVolumeInCue(cueId, volume, context, options = {}) {
@@ -171,10 +199,13 @@ function applySeekToSound(cueId, playingState, sound, clampedPosition, context, 
         sound.play();
     }
 
+    playingState.isPaused = false;
+
     const status = sound.playing()
         ? 'playing'
         : (playingState.isPaused ? 'paused' : 'paused_seek');
     sendSeekPlaybackUpdate(cueId, playingState, sound, status, context);
+    ensureTimeUpdateIntervalAfterSeek(cueId, playingState, sound, context);
 }
 
 export function seekInCue(cueId, positionSec, context, options = {}) {

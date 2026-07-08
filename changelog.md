@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.7
+
+### Changed
+- Companion WebSocket broadcasts cues in grid layout order with v2 sections/layout payload
+- Companion WebSocket supports seek, prepare seek, and live volume actions
+
+### Fixed
+- Playback time and playhead freeze after waveform seek (inverted `lastSeekPosition` pinning)
+- Time-update interval stopping during scrub/seek handoff
+- Main waveform panel playhead sync after seek (pointer capture, scrub prep, sync reset)
+
 ## 1.5.6
 
 ### Added

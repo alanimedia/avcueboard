@@ -177,6 +177,18 @@ function getCues() {
   return cues;
 }
 
+function getCuesInLayoutOrder() {
+  const orderedIds = getOrderedCueIds(layout);
+  const cueMap = new Map(cues.map(cue => [cue.id, cue]));
+  const ordered = orderedIds.map(cueId => cueMap.get(cueId)).filter(Boolean);
+  cues.forEach(cue => {
+    if (!orderedIds.includes(cue.id)) {
+      ordered.push(cue);
+    }
+  });
+  return ordered;
+}
+
 function getCueById(cueId) {
   const cue = cues.find(c => c.id === cueId);
   return cue;
@@ -617,6 +629,7 @@ module.exports = {
   loadCuesFromFile,
   saveCuesToFile,
   getCues,
+  getCuesInLayoutOrder,
   getCueById,
   getSections,
   getLayout,

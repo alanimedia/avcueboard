@@ -616,7 +616,8 @@ function updateCueButtonTimeDisplay(data) {
             mainWaveformPanelModule.handlePlaybackUpdate(cueId, {
                 currentTimeSec: data.currentTimeSec || 0,
                 totalDurationSec: data.totalDurationSec || 0,
-                status: data.status || 'stopped'
+                status: data.status || 'stopped',
+                volume: typeof data.volume === 'number' ? data.volume : undefined
             }, activeCue);
         }
 

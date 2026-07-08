@@ -83,8 +83,8 @@ export function createTimeUpdateInterval(cueId, sound, playingState, currentItem
             // intervalStopReason = "State is marked as paused"; // Don't stop interval on pause, we need to show paused time
             // Instead, just ensure we send 'paused' status
         } else if (!sound.playing()) {
-             // CRITICAL FIX: Stop interval immediately if sound is no longer playing, UNLESS paused
-             if (!latestGlobalState.isPaused) {
+             // Stop interval if playback ended, but not during active scrub/seek handoff.
+             if (!latestGlobalState.isPaused && !latestGlobalState.isScrubbing) {
                  intervalStopReason = "Sound is no longer playing (ended/stopped) and not paused";
              }
         }

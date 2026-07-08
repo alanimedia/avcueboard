@@ -99,8 +99,19 @@ async function startServer(port = DEFAULT_PORT, enabled = true) {
 
             if (cueManagerRef) {
                 try {
-                    const cues = cueManagerRef.getCues();
-                    const message = JSON.stringify({ event: 'cuesListUpdate', payload: { cues } });
+                    const cues = typeof cueManagerRef.getCuesInLayoutOrder === 'function'
+                        ? cueManagerRef.getCuesInLayoutOrder()
+                        : cueManagerRef.getCues();
+                    const sections = typeof cueManagerRef.getSections === 'function'
+                        ? cueManagerRef.getSections()
+                        : [];
+                    const layout = typeof cueManagerRef.getLayout === 'function'
+                        ? cueManagerRef.getLayout()
+                        : [];
+                    const message = JSON.stringify({
+                        event: 'cuesListUpdate',
+                        payload: { cues, sections, layout, version: 2 },
+                    });
                     wsClient.send(message);
                     logger.info(`WebSocket Server: Sent initial cues list with ${cues.length} cues to client`);
                 } catch (error) {
@@ -276,6 +287,54 @@ function handleCompanionMessage(message) {
                 logger.warn(`WebSocket Server: Invalid payload for playlistJumpToItem action - missing cueId or targetIndex`);
             }
             break;
+        case 'prepareSeek':
+        case 'prepare_seek':
+            if (message.payload && message.payload.cueId) {
+                try {
+                    mainWindowRef.webContents.send('prepare-seek-cue-by-id-from-main', { cueId: message.payload.cueId });
+                } catch (error) {
+                    logger.error(`WebSocket Server: Error sending prepare seek IPC for cue ${message.payload.cueId}:`, error);
+                }
+            }
+            break;
+        case 'seekCue':
+        case 'seek_cue':
+            if (message.payload && message.payload.cueId != null && message.payload.positionSec != null) {
+                try {
+                    mainWindowRef.webContents.send('seek-cue-by-id-from-main', {
+                        cueId: message.payload.cueId,
+                        positionSec: Number(message.payload.positionSec),
+                        finalizeScrub: message.payload.finalizeScrub !== false,
+                        skipScrubMute: message.payload.skipScrubMute === true,
+                    });
+                } catch (error) {
+                    logger.error(`WebSocket Server: Error sending seek IPC for cue ${message.payload.cueId}:`, error);
+                }
+            }
+            break;
+        case 'setCueVolume':
+        case 'set_cue_volume':
+            if (message.payload && message.payload.cueId != null && message.payload.volume != null) {
+                const volume = Math.max(0, Math.min(1, Number(message.payload.volume)));
+                try {
+                    mainWindowRef.webContents.send('set-cue-volume-by-id-from-main', {
+                        cueId: message.payload.cueId,
+                        volume,
+                        persist: message.payload.persist !== false,
+                    });
+                    if (message.payload.persist !== false && cueManagerRef && typeof cueManagerRef.getCueById === 'function') {
+                        const existingCue = cueManagerRef.getCueById(message.payload.cueId);
+                        if (existingCue && typeof cueManagerRef.addOrUpdateProcessedCue === 'function') {
+                            cueManagerRef.addOrUpdateProcessedCue({ ...existingCue, volume }, null, { silentSave: true }).catch((err) => {
+                                logger.error('WebSocket Server: Failed to persist live volume patch:', err);
+                            });
+                        }
+                    }
+                } catch (error) {
+                    logger.error(`WebSocket Server: Error sending set volume IPC for cue ${message.payload.cueId}:`, error);
+                }
+            }
+            break;
         default:
             logger.warn('WebSocket Server: Unknown action from Companion:', message.action);
     }
@@ -306,9 +365,25 @@ function broadcastToAllClients(messageObject) {
     });
 }
 
+function getCompanionCuesPayload(cueList) {
+    if (!cueManagerRef) {
+        return { cues: cueList || [], sections: [], layout: [], version: 2 };
+    }
+    const cues = typeof cueManagerRef.getCuesInLayoutOrder === 'function'
+        ? cueManagerRef.getCuesInLayoutOrder()
+        : (cueList || cueManagerRef.getCues());
+    const sections = typeof cueManagerRef.getSections === 'function'
+        ? cueManagerRef.getSections()
+        : [];
+    const layout = typeof cueManagerRef.getLayout === 'function'
+        ? cueManagerRef.getLayout()
+        : [];
+    return { cues, sections, layout, version: 2 };
+}
+
 function broadcastCuesListUpdate(currentCues) {
     logger.info('Broadcasting cues list update to Companion clients.');
-    broadcastToAllClients({ event: 'cuesListUpdate', payload: { cues: currentCues } });
+    broadcastToAllClients({ event: 'cuesListUpdate', payload: getCompanionCuesPayload(currentCues) });
 }
 
 function broadcastCueStatus(cueId, status, error = null) {

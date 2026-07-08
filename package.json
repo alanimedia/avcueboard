@@ -1,6 +1,6 @@
 {
   "name": "accompaniment",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "A soundboard app",
   "main": "main.js",
   "scripts": {
