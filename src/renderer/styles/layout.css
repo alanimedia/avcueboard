@@ -309,11 +309,29 @@ body.main-waveform-resizing .main-waveform-resize-handle {
     display: flex;
 }
 
+#mainWaveformDisplay.has-lanes .main-waveform-lane-header {
+    display: flex;
+}
+
 .main-waveform-lane-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     margin-right: 8px;
+}
+
+.main-waveform-lane-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.main-waveform-lane-volume {
+    width: 72px;
+    height: 14px;
+    margin: 0;
+    accent-color: #7c3aed;
 }
 
 .main-waveform-lane-time {
@@ -325,6 +343,7 @@ body.main-waveform-resizing .main-waveform-resize-handle {
     flex: 1 1 auto;
     min-height: 44px;
     width: 100%;
+    cursor: pointer;
 }
 
 body.main-waveform-resizing {

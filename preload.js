@@ -66,6 +66,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'playlist-navigate-next-from-main',
       'playlist-navigate-previous-from-main',
       'playlist-jump-to-item-from-main',
+      'seek-cue-by-id-from-main',
+      'prepare-seek-cue-by-id-from-main',
+      'set-cue-volume-by-id-from-main',
       // Add other channels as needed
       'mixer-subscription-feedback',
       'playback-time-update-from-main',

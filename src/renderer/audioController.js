@@ -194,12 +194,27 @@ function stopAll(options = { exceptCueId: null, useFade: true }) {
     playbackManagerModule.stopAllCues(options);
 }
 
-function seek(cueId, positionSec) {
+function seek(cueId, positionSec, options = {}) {
     if (!audioControllerInitialized || !playbackManagerModule || !playbackManagerModule.seekInCue) {
         log.error(`AudioController: seek called for ${cueId} before full initialization or playbackManager not ready.`);
         return;
     }
-    playbackManagerModule.seekInCue(cueId, positionSec);
+    playbackManagerModule.seekInCue(cueId, positionSec, options);
+}
+
+function prepareScrubSeek(cueId) {
+    if (!audioControllerInitialized || !playbackManagerModule || !playbackManagerModule.prepareScrubInCue) {
+        return;
+    }
+    playbackManagerModule.prepareScrubInCue(cueId);
+}
+
+function setVolume(cueId, volume, options = {}) {
+    if (!audioControllerInitialized || !playbackManagerModule || !playbackManagerModule.setCueVolume) {
+        log.error(`AudioController: setVolume called for ${cueId} before full initialization or playbackManager not ready.`);
+        return false;
+    }
+    return playbackManagerModule.setCueVolume(cueId, volume, options);
 }
 
 function getPlaybackTimes(cueId) {
@@ -777,6 +792,8 @@ export default {
     // stop: (cueId, useFade = true, fromCompanion = false) => playbackManagerModule?.stopCue(cueId, useFade, fromCompanion), // Expose stopCue from manager
     // pause: (cueId) => playbackManagerModule?.pauseCue(cueId), // Expose pauseCue from manager
     seek,
+    prepareScrubSeek,
+    setVolume,
     getPlaybackTimes, // This now includes more comprehensive state
     isPlaying,
     isPaused,

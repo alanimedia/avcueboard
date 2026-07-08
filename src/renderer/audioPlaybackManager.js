@@ -13,7 +13,7 @@ import { play, stop, pause, _initializeAndPlayNew, _playTargetItem } from './aud
 import { _handlePlaylistEnd } from './audioPlaybackPlaylistHandling.js';
 import { toggleCue } from './audioPlaybackToggle.js';
 import { _addToPlayOrder, _removeFromPlayOrder, _getCurrentPriorityCue, _updateCurrentCueForCompanion, _cleanupSoundInstance, getPlaybackState } from './audioPlaybackStateManagement.js';
-import { seekInCue, stopAllCues } from './audioPlaybackUtilities.js';
+import { seekInCue, stopAllCues, setCueVolumeInCue, prepareScrubInCue } from './audioPlaybackUtilities.js';
 import { clearTimeUpdateIntervals } from './playbackTimeManager.js';
 
 // External dependencies (will be passed in via init)
@@ -179,7 +179,9 @@ publicAPIManagerInstance = {
         return toggleCue(cueIdToToggle, fromCompanion, retriggerBehaviorOverride, context);
     },
     stopAllCues: (options = { exceptCueId: null, useFade: true }) => stopAllCues(options, createContext()),
-    seekInCue: (cueId, positionSec) => seekInCue(cueId, positionSec, createContext()),
+    seekInCue: (cueId, positionSec, options = {}) => seekInCue(cueId, positionSec, createContext(), options),
+    prepareScrubInCue: (cueId) => prepareScrubInCue(cueId, createContext()),
+    setCueVolume: (cueId, volume, options = {}) => setCueVolumeInCue(cueId, volume, createContext(), options),
     getPlaybackState: (cueId) => getPlaybackState(cueId, createContext()),
     playlistNavigateNext: (cueId, fromExternal) => playlistNavigateNext(cueId, fromExternal, currentlyPlaying, getGlobalCueByIdRef, (cueId, index, isResume) => _playTargetItem(cueId, index, isResume, createContext()), _generateShuffleOrder, startPlaylistAtPosition, sidebarsAPIRef, cuePlayOrder, sendPlaybackTimeUpdateRef),
     playlistNavigatePrevious: (cueId, fromExternal) => playlistNavigatePrevious(cueId, fromExternal, currentlyPlaying, getGlobalCueByIdRef, (cueId, index, isResume) => _playTargetItem(cueId, index, isResume, createContext()), _generateShuffleOrder, startPlaylistAtPosition, sidebarsAPIRef, cuePlayOrder, sendPlaybackTimeUpdateRef),

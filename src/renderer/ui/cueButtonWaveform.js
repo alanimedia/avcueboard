@@ -112,7 +112,53 @@ export function drawWaveformOnCanvas(canvas, peaksData, cue) {
     ctx.stroke();
 }
 
-export async function ensureButtonWaveform(button, cue, fetchPeaks, appConfig = {}) {
+export function bindButtonWaveformSeek(wrap, cue, peaksData, onSeek, onPrepare) {
+    if (!wrap || !cue?.id || typeof onSeek !== 'function' || wrap.dataset.seekBound === 'true') return;
+    wrap.dataset.seekBound = 'true';
+    wrap.style.cursor = 'pointer';
+    wrap.style.touchAction = 'none';
+
+    let activePointerId = null;
+
+    const seekAtClientX = (clientX, options = {}) => {
+        const canvas = wrap.querySelector('.cue-button-waveform-canvas');
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width) return;
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const fullDuration = peaksData?.duration || cue.knownDuration || cue.knownDurationS || 0;
+        if (fullDuration <= 0) return;
+        onSeek(cue.id, ratio * fullDuration, options);
+    };
+
+    wrap.addEventListener('pointerdown', (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        activePointerId = event.pointerId;
+        wrap.setPointerCapture(event.pointerId);
+        if (typeof onPrepare === 'function') onPrepare(cue.id);
+    });
+
+    wrap.addEventListener('pointermove', (event) => {
+        if (event.pointerId !== activePointerId) return;
+        event.preventDefault();
+        seekAtClientX(event.clientX, { finalizeScrub: false, coalesceMs: 60 });
+    });
+
+    const finishPointer = (event) => {
+        if (event.pointerId !== activePointerId) return;
+        seekAtClientX(event.clientX, { finalizeScrub: true });
+        activePointerId = null;
+        try {
+            wrap.releasePointerCapture(event.pointerId);
+        } catch (e) { /* ignore */ }
+    };
+
+    wrap.addEventListener('pointerup', finishPointer);
+    wrap.addEventListener('pointercancel', finishPointer);
+}
+
+export async function ensureButtonWaveform(button, cue, fetchPeaks, appConfig = {}, onSeek = null, onPrepare = null) {
     if (!button || !shouldShowButtonWaveform(cue, appConfig)) {
         removeButtonWaveform(button);
         return;
@@ -138,6 +184,9 @@ export async function ensureButtonWaveform(button, cue, fetchPeaks, appConfig = 
         return;
     }
     drawWaveformOnCanvas(canvas, peaksData, cue);
+    if (typeof onSeek === 'function') {
+        bindButtonWaveformSeek(wrap, cue, peaksData, onSeek, onPrepare);
+    }
 }
 
 export function updateButtonWaveformPlayhead(button, cue, appConfig = {}) {

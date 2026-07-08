@@ -96,7 +96,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('Renderer: Found handleCuePropertyChangeFromWaveform, initializing waveformControls with callback');
         waveformControls.init({
             ipcRendererBindings: electronAPI, // Pass electronAPI for IPC communication
-            onTrimChange: sidebars.handleCuePropertyChangeFromWaveform
+            onTrimChange: sidebars.handleCuePropertyChangeFromWaveform,
+            onSeekPlayback: (cueId, positionSec, options) => audioController.default.seek(cueId, positionSec, options),
+            onPrepareScrub: (cueId) => audioController.default.prepareScrubSeek(cueId)
         });
     } else {
         console.error('Renderer: sidebars.handleCuePropertyChangeFromWaveform is not available for WaveformControls init.');
@@ -106,7 +108,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             ipcRendererBindings: electronAPI, 
             onTrimChange: () => {
                 console.warn('Renderer: Fallback onTrimChange called - no sidebar integration');
-            } 
+            },
+            onSeekPlayback: (cueId, positionSec, options) => audioController.default.seek(cueId, positionSec, options),
+            onPrepareScrub: (cueId) => audioController.default.prepareScrubSeek(cueId)
         });
     }
 

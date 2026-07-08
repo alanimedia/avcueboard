@@ -433,7 +433,7 @@ function triggerCueById(cueId, source = 'unknown') {
 
 // Mixer trigger function removed
 
-async function addOrUpdateProcessedCue(cueData, workspacePath) {
+async function addOrUpdateProcessedCue(cueData, workspacePath, options = {}) {
   logger.info(`[CueManager] addOrUpdateProcessedCue received raw cueData. ID: ${cueData.id}, Name: ${cueData.name}`);
   const layoutOptions = cueData._layoutOptions || null;
   const cleanCueData = { ...cueData };
@@ -545,7 +545,7 @@ async function addOrUpdateProcessedCue(cueData, workspacePath) {
   }
 
   // Save and notify renderer/remotes with full workspace snapshot (sections + layout).
-  await saveCuesToFile();
+  await saveCuesToFile(options.silentSave === true);
 
   // Return a copy of the processed cue
   const finalCueIndex = isNew ? cues.length - 1 : existingCueIndex;

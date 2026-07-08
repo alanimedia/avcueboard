@@ -145,7 +145,19 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
     mainWaveformPanelModule.init({
         getAppConfig: () => appConfigUIModuleInternal?.getCurrentAppConfig?.() || {},
         savePartialConfig: (partial) => appConfigUIModuleInternal?.savePartialAppConfiguration?.(partial),
-        getCueById: (cueId) => cueStoreModule?.getCueById?.(cueId)
+        getCueById: (cueId) => cueStoreModule?.getCueById?.(cueId),
+        seekCue: (cueId, positionSec, options) => {
+            const ac = audioControllerModule?.default || audioControllerModule;
+            ac?.seek?.(cueId, positionSec, options);
+        },
+        prepareScrub: (cueId) => {
+            const ac = audioControllerModule?.default || audioControllerModule;
+            ac?.prepareScrubSeek?.(cueId);
+        },
+        setCueVolume: (cueId, volume, options) => {
+            const ac = audioControllerModule?.default || audioControllerModule;
+            ac?.setVolume?.(cueId, volume, options);
+        }
     });
     
     // Make uiModules available globally for other modules to access

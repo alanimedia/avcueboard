@@ -17,6 +17,7 @@ let activePropertiesCueId;
 let cueStore;
 let domElements;
 let ipcRendererBindingsModule;
+let audioControllerModule;
 
 /**
  * Initialize event handlers
@@ -26,12 +27,13 @@ let ipcRendererBindingsModule;
  * @param {Object} elements - DOM elements object
  * @param {Object} ipcAPI - IPC renderer bindings module
  */
-function initEventHandlers(saveCallback, setActiveCueId, csModule, elements, ipcAPI) {
+function initEventHandlers(saveCallback, setActiveCueId, csModule, elements, ipcAPI, acModule) {
     debouncedSaveCueProperties = saveCallback;
     activePropertiesCueId = setActiveCueId;
     cueStore = csModule;
     domElements = elements;
     ipcRendererBindingsModule = ipcAPI;
+    audioControllerModule = acModule;
 }
 
 /**
@@ -66,7 +68,32 @@ function bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDelete
     // Volume range input handler
     if (domElements.propVolumeRangeInput && domElements.propVolumeValueSpan) {
         domElements.propVolumeRangeInput.addEventListener('input', (e) => {
-            domElements.propVolumeValueSpan.textContent = parseFloat(e.target.value).toFixed(2);
+            const vol = parseFloat(e.target.value);
+            domElements.propVolumeValueSpan.textContent = vol.toFixed(2);
+            if (domElements.propVolumeSlider) domElements.propVolumeSlider.value = vol;
+            if (domElements.propVolumeValueDisplay) domElements.propVolumeValueDisplay.textContent = vol.toFixed(2);
+            const cueId = typeof activePropertiesCueId === 'function' ? null : activePropertiesCueId;
+            if (cueId && audioControllerModule) {
+                const ac = audioControllerModule.default || audioControllerModule;
+                if (typeof ac.setVolume === 'function') {
+                    ac.setVolume(cueId, vol, { persist: false });
+                }
+            }
+        });
+    }
+    if (domElements.propVolumeSlider) {
+        domElements.propVolumeSlider.addEventListener('input', (e) => {
+            const vol = parseFloat(e.target.value);
+            if (domElements.propVolumeRangeInput) domElements.propVolumeRangeInput.value = vol;
+            if (domElements.propVolumeValueSpan) domElements.propVolumeValueSpan.textContent = vol.toFixed(2);
+            if (domElements.propVolumeValueDisplay) domElements.propVolumeValueDisplay.textContent = vol.toFixed(2);
+            const cueId = typeof activePropertiesCueId === 'function' ? null : activePropertiesCueId;
+            if (cueId && audioControllerModule) {
+                const ac = audioControllerModule.default || audioControllerModule;
+                if (typeof ac.setVolume === 'function') {
+                    ac.setVolume(cueId, vol, { persist: false });
+                }
+            }
         });
     }
 

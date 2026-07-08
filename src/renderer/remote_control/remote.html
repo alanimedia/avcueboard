@@ -344,6 +344,12 @@
             min-width: 2.5em;
             text-align: right;
         }
+        .remote-waveform-lane-volume-slider {
+            width: 64px;
+            height: 14px;
+            margin: 0;
+            accent-color: #7c3aed;
+        }
         #stopAllButtonRemote {
             background-color: #703030; /* Dark red */
             color: white;
@@ -502,6 +508,9 @@
             display: flex;
             flex-direction: column;
         }
+        #remoteWaveformLanes.has-lanes .remote-waveform-lane-header {
+            display: flex;
+        }
         #remoteWaveformLanes.multi-lane .remote-waveform-lane-header {
             display: flex;
         }
@@ -539,6 +548,8 @@
             min-height: 0;
             overflow: hidden;
             background: rgba(0, 0, 0, 0.35);
+            cursor: pointer;
+            touch-action: none;
         }
         .remote-waveform-lane-canvas {
             display: block;
@@ -1301,6 +1312,60 @@
             sendRemoteAction('update_config', { patch });
         }, 500);
 
+        function isActivePlaybackStatus(status) {
+            return status === 'playing' || status === 'paused' || status === 'fading';
+        }
+
+        function mergeRemotePlaybackState(prevCue, nextCue) {
+            if (!prevCue || !nextCue) return nextCue;
+            if (!isActivePlaybackStatus(prevCue.status)) return nextCue;
+            if (isActivePlaybackStatus(nextCue.status)) return nextCue;
+            return {
+                ...nextCue,
+                status: prevCue.status,
+                currentTimeS: prevCue.currentTimeS,
+                currentItemDurationS: prevCue.currentItemDurationS,
+                currentItemRemainingTimeS: prevCue.currentItemRemainingTimeS,
+                playlistItemName: prevCue.playlistItemName,
+                nextPlaylistItemName: prevCue.nextPlaylistItemName,
+                progressRatio: prevCue.progressRatio,
+                fileProgressRatio: prevCue.fileProgressRatio,
+                knownDurationS: prevCue.knownDurationS ?? nextCue.knownDurationS,
+                volume: nextCue.volume !== undefined ? nextCue.volume : prevCue.volume
+            };
+        }
+
+        function applyLiveRemoteCueVolume(cueId, volume) {
+            if (!cueId) return;
+            if (currentCues[cueId]) {
+                currentCues[cueId] = { ...currentCues[cueId], volume };
+            }
+            sendRemoteAction('set_cue_volume', { cueId, volume, persist: false });
+        }
+
+        const debouncedPersistRemoteCueVolume = debounce((cueId, volume) => {
+            sendRemoteAction('update_cue', { cueId, patch: { volume } });
+        }, 500);
+
+        function hasRemoteCueStructureChanged(prevCues, message) {
+            const prevIds = new Set(Object.keys(prevCues || {}));
+            const nextPayload = Array.isArray(message.payload) ? message.payload : [];
+            const nextIds = new Set(nextPayload.map((cue) => cue.id));
+            if (prevIds.size !== nextIds.size) return true;
+            for (const id of prevIds) {
+                if (!nextIds.has(id)) return true;
+            }
+            const nextSections = JSON.stringify(message.sections || []);
+            const nextLayout = JSON.stringify(message.layout || []);
+            if (JSON.stringify(currentSections) !== nextSections) return true;
+            if (JSON.stringify(currentLayout) !== nextLayout) return true;
+            return false;
+        }
+
+        function patchPlaybackCuesInPlace(cues) {
+            (cues || []).forEach((cue) => updateCueButtonRemote(cue));
+        }
+
         function setRemoteMode(mode) {
             remoteMode = mode === 'edit' ? 'edit' : 'playback';
             localStorage.setItem('remoteMode', remoteMode);
@@ -1502,6 +1567,11 @@
             });
             document.getElementById('cuePropVolume')?.addEventListener('input', (e) => {
                 document.getElementById('cuePropVolumeLabel').textContent = `${e.target.value}%`;
+                if (activeCuePropertiesId) {
+                    const vol = parseInt(e.target.value, 10) / 100;
+                    applyLiveRemoteCueVolume(activeCuePropertiesId, vol);
+                    debouncedPersistRemoteCueVolume(activeCuePropertiesId, vol);
+                }
             });
             document.getElementById('cuePropVolume')?.addEventListener('change', (e) => {
                 saveCuePropPatch({ volume: parseInt(e.target.value, 10) / 100 });
@@ -1633,12 +1703,21 @@
                 updateMessageInfo(message);
                 
                 if (message.type === 'all_cues') {
+                    const prevCues = { ...currentCues };
                     currentCues = {};
                     if (message.payload && Array.isArray(message.payload)) {
-                        message.payload.forEach(cue => currentCues[cue.id] = cue);
+                        message.payload.forEach((cue) => {
+                            const merged = mergeRemotePlaybackState(prevCues[cue.id], cue);
+                            currentCues[cue.id] = merged;
+                        });
                         currentSections = Array.isArray(message.sections) ? message.sections : [];
                         currentLayout = Array.isArray(message.layout) ? message.layout : [];
-                        renderAllCuesRemote(message.payload);
+                        const structureChanged = hasRemoteCueStructureChanged(prevCues, message);
+                        if (structureChanged || remoteMode === 'edit') {
+                            renderAllCuesRemote(Object.values(currentCues));
+                        } else {
+                            patchPlaybackCuesInPlace(Object.values(currentCues));
+                        }
                         syncPlayingCuesToRemotePanel();
                         if (activeCuePropertiesId && !currentCues[activeCuePropertiesId]) {
                             closeCuePropertiesPanel();
@@ -1672,9 +1751,13 @@
                     }
                 } else if (message.type === 'remote_cue_update') {
                     if (currentCues[message.cue.id]) {
-                        Object.assign(currentCues[message.cue.id], message.cue);
+                        const mergedCue = mergeRemotePlaybackState(
+                            currentCues[message.cue.id],
+                            { ...currentCues[message.cue.id], ...message.cue }
+                        );
+                        currentCues[message.cue.id] = mergedCue;
                         if (remoteMode === 'playback') {
-                            updateCueButtonRemote(message.cue);
+                            updateCueButtonRemote(mergedCue);
                         }
                     } else {
                         currentCues[message.cue.id] = message.cue;
@@ -1787,10 +1870,6 @@
             button.style.setProperty('--cue-custom-fg-secondary', secondary);
             button.style.backgroundColor = normalized;
             button.style.color = primary;
-        }
-
-        function isActivePlaybackStatus(status) {
-            return status === 'playing' || status === 'paused' || status === 'fading';
         }
 
         function clampRemotePanelHeight(height) {
@@ -1988,8 +2067,15 @@
         }
 
         function syncRemoteLanesLayout() {
-            const multi = remoteWaveformLaneMap.size > 1;
+            const count = remoteWaveformLaneMap.size;
+            const multi = count > 1;
             remoteWaveformLanes?.classList.toggle('multi-lane', multi);
+            remoteWaveformLanes?.classList.toggle('has-lanes', count > 0);
+            remoteWaveformLaneMap.forEach((lane) => {
+                if (lane.timeEl) {
+                    lane.timeEl.style.display = multi ? '' : 'none';
+                }
+            });
         }
 
         function scheduleRemoteLanesResizeRedraw() {
@@ -2058,8 +2144,20 @@
 
             const headerEl = document.createElement('div');
             headerEl.className = 'remote-waveform-lane-header';
-            headerEl.innerHTML = '<span class="remote-waveform-lane-name"></span><span class="remote-waveform-lane-meta"><span class="remote-waveform-lane-volume"></span><span class="remote-waveform-lane-time"></span></span>';
+            headerEl.innerHTML = '<span class="remote-waveform-lane-name"></span><span class="remote-waveform-lane-meta"><input type="range" class="remote-waveform-lane-volume-slider" min="0" max="100" step="1" title="Volume"><span class="remote-waveform-lane-volume"></span><span class="remote-waveform-lane-time"></span></span>';
             headerEl.querySelector('.remote-waveform-lane-name').textContent = cue.name || 'Cue';
+            const volumeSlider = headerEl.querySelector('.remote-waveform-lane-volume-slider');
+            if (volumeSlider) {
+                volumeSlider.value = String(Math.round(getRemoteCueVolume(cue) * 100));
+                volumeSlider.addEventListener('input', (event) => {
+                    event.stopPropagation();
+                    const vol = parseInt(volumeSlider.value, 10) / 100;
+                    applyLiveRemoteCueVolume(cue.id, vol);
+                    debouncedPersistRemoteCueVolume(cue.id, vol);
+                });
+                volumeSlider.addEventListener('mousedown', (event) => event.stopPropagation());
+                volumeSlider.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+            }
 
             const wrapEl = document.createElement('div');
             wrapEl.className = 'remote-waveform-lane-canvas-wrap';
@@ -2081,12 +2179,91 @@
                 bgCanvas: null,
                 bgCacheKey: null,
                 timeEl: headerEl.querySelector('.remote-waveform-lane-time'),
-                volumeEl: headerEl.querySelector('.remote-waveform-lane-volume')
+                volumeEl: headerEl.querySelector('.remote-waveform-lane-volume'),
+                volumeSliderEl: volumeSlider,
+                isUserSeeking: false,
+                userSeekingTimeout: null
             };
             remoteWaveformLaneMap.set(cue.id, lane);
+            bindRemoteLaneSeek(lane);
             syncRemoteLanesLayout();
             redrawRemoteLane(cue);
             updateRemotePanelHeader();
+        }
+
+        function bindRemoteLaneSeek(lane) {
+            const wrap = lane?.wrapEl;
+            if (!wrap || wrap.dataset.seekBound === 'true') return;
+            wrap.dataset.seekBound = 'true';
+
+            let activePointerId = null;
+            let lastSeekSentAt = 0;
+            const SEEK_THROTTLE_MS = 70;
+
+            const computeSeekPosition = (clientX) => {
+                const cue = lane.cue;
+                const peaksData = lane.peaksData;
+                if (!cue?.id || !peaksData) return null;
+                const rect = lane.canvas.getBoundingClientRect();
+                if (!rect.width) return null;
+                const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                const fullDuration = peaksData.duration || cue.knownDurationS || 0;
+                if (fullDuration <= 0) return null;
+                return ratio * fullDuration;
+            };
+
+            const markUserSeeking = () => {
+                lane.isUserSeeking = true;
+                clearTimeout(lane.userSeekingTimeout);
+                lane.userSeekingTimeout = setTimeout(() => {
+                    lane.isUserSeeking = false;
+                }, 400);
+            };
+
+            const sendSeek = (positionSec, { finalize = true, force = false } = {}) => {
+                if (positionSec == null) return;
+                const now = Date.now();
+                if (!force && !finalize && now - lastSeekSentAt < SEEK_THROTTLE_MS) {
+                    lane.pendingSeekPosition = positionSec;
+                    return;
+                }
+                lastSeekSentAt = now;
+                lane.pendingSeekPosition = null;
+                markUserSeeking();
+                sendRemoteAction('seek_cue', {
+                    cueId: lane.cue.id,
+                    positionSec,
+                    finalizeScrub: finalize
+                });
+            };
+
+            wrap.addEventListener('pointerdown', (event) => {
+                if (activePointerId != null) return;
+                event.preventDefault();
+                activePointerId = event.pointerId;
+                wrap.setPointerCapture(event.pointerId);
+                sendRemoteAction('prepare_seek', { cueId: lane.cue.id });
+                markUserSeeking();
+            });
+
+            wrap.addEventListener('pointermove', (event) => {
+                if (event.pointerId !== activePointerId) return;
+                const positionSec = computeSeekPosition(event.clientX);
+                sendSeek(positionSec, { finalize: false });
+            });
+
+            const finishPointer = (event) => {
+                if (event.pointerId !== activePointerId) return;
+                const positionSec = lane.pendingSeekPosition ?? computeSeekPosition(event.clientX);
+                sendSeek(positionSec, { finalize: true, force: true });
+                activePointerId = null;
+                try {
+                    wrap.releasePointerCapture(event.pointerId);
+                } catch (e) { /* ignore */ }
+            };
+
+            wrap.addEventListener('pointerup', finishPointer);
+            wrap.addEventListener('pointercancel', finishPointer);
         }
 
         function getCueDurationForDisplay(cue) {
@@ -2165,7 +2342,7 @@
 
         function redrawRemoteLane(cue) {
             const lane = remoteWaveformLaneMap.get(cue.id);
-            if (!lane || !lane.peaksData) return;
+            if (!lane || !lane.peaksData || lane.isUserSeeking) return;
 
             const { width, height } = ensureLaneWaveformBackground(lane, cue);
             const canvas = lane.canvas;
@@ -2198,8 +2375,12 @@
             }
             if (lane.volumeEl) {
                 const active = isActivePlaybackStatus(cue.status);
-                lane.volumeEl.textContent = `${Math.round(getRemoteCueVolume(cue) * 100)}%`;
+                const volPct = Math.round(getRemoteCueVolume(cue) * 100);
+                lane.volumeEl.textContent = `${volPct}%`;
                 lane.volumeEl.style.display = active ? '' : 'none';
+                if (lane.volumeSliderEl && document.activeElement !== lane.volumeSliderEl) {
+                    lane.volumeSliderEl.value = String(volPct);
+                }
             }
         }
 
@@ -2918,6 +3099,9 @@
                 volInput.addEventListener('input', (e) => {
                     e.stopPropagation();
                     volLabel.textContent = `${volInput.value}%`;
+                    const vol = parseInt(volInput.value, 10) / 100;
+                    applyLiveRemoteCueVolume(cue.id, vol);
+                    debouncedPersistRemoteCueVolume(cue.id, vol);
                 });
                 volInput.addEventListener('change', (e) => {
                     e.stopPropagation();
@@ -3268,7 +3452,8 @@
             const savedScroll = captureRemoteScrollPosition();
             const wrapper = cueGridRemote.querySelector(`.cue-remote-wrapper[data-cue-id="${cue.id}"]`);
             const button = wrapper?.querySelector('.cue-button-remote') || cueGridRemote.querySelector(`.cue-button-remote[data-cue-id="${cue.id}"]`);
-            const mergedCue = { ...currentCues[cue.id], ...cue };
+            const mergedCue = mergeRemotePlaybackState(currentCues[cue.id], { ...currentCues[cue.id], ...cue });
+            currentCues[cue.id] = mergedCue;
             if (button) {
                 updateButtonTextContent(button, mergedCue);
                 updateButtonStatusClass(button, mergedCue.status, mergedCue);

@@ -4,46 +4,181 @@
 import { log } from './audioPlaybackLogger.js';
 import { cleanupAllResources } from './audioPlaybackUtils.js';
 import { _cuePlaylistAtPosition } from './audioPlaybackPlaylist.js';
+import { scheduleTrimEndEnforcement } from './playbackTimeManager.js';
 
-export function seekInCue(cueId, positionSec, context) {
-    const {
-        currentlyPlaying,
-        sendPlaybackTimeUpdateRef,
-        getGlobalCueByIdRef
-    } = context;
+const pendingSeekTimers = new Map();
+
+function clampSeekPosition(positionSec, cue) {
+    const trimStart = cue?.trimStartTime || 0;
+    let clamped = Math.max(trimStart, Number(positionSec) || 0);
+    const trimEnd = cue?.trimEndTime;
+    if (trimEnd != null && trimEnd > trimStart) {
+        clamped = Math.min(trimEnd, clamped);
+    }
+    return clamped;
+}
+
+function sendSeekPlaybackUpdate(cueId, playingState, sound, status, context) {
+    const { sendPlaybackTimeUpdateRef, getGlobalCueByIdRef } = context;
+    if (!sendPlaybackTimeUpdateRef || !getGlobalCueByIdRef) return;
+
+    const mainCue = playingState.cue || getGlobalCueByIdRef(cueId);
+    let currentItemName = mainCue?.name || 'Cue';
+    if (playingState.isPlaylist && playingState.originalPlaylistItems?.[playingState.currentPlaylistItemIndex]) {
+        currentItemName = playingState.originalPlaylistItems[playingState.currentPlaylistItemIndex].name || currentItemName;
+    }
+    sendPlaybackTimeUpdateRef(cueId, sound, playingState, currentItemName, status);
+}
+
+export function setCueVolumeInCue(cueId, volume, context, options = {}) {
+    const { currentlyPlaying, sendPlaybackTimeUpdateRef, getGlobalCueByIdRef, cueStoreRef } = context;
+    const { persist = true } = options;
+    const clamped = Math.max(0, Math.min(1, Number(volume)));
+    if (!Number.isFinite(clamped)) return false;
+
+    const cue = getGlobalCueByIdRef?.(cueId);
+    if (persist && cueStoreRef && cue) {
+        cueStoreRef.addOrUpdateCue({ ...cue, volume: clamped });
+    }
 
     const playingState = currentlyPlaying[cueId];
-    if (playingState && playingState.sound) {
-        console.log(`AudioPlaybackManager: Seeking in cue ${cueId} to ${positionSec}s.`);
-        if (playingState.isPlaylist) {
-            // For playlists, seeking might mean restarting the current item at a new position
-            // or even changing items, which is complex.
-            // Current implementation: seek the currently playing item of the playlist.
-            // This might need more sophisticated handling if cross-item playlist seek is desired.
-            const currentItemSound = playingState.sound;
-            if (currentItemSound) {
-                currentItemSound.seek(positionSec);
-                // If paused, it remains paused at new position. If playing, it continues from new position.
-                // Update time immediately for UI.
-                if (sendPlaybackTimeUpdateRef && getGlobalCueByIdRef) {
-                     const mainCue = playingState.cue;
-                     let currentItemName = mainCue.name;
-                     if(playingState.isPlaylist && playingState.originalPlaylistItems[playingState.currentPlaylistItemIndex]) {
-                        currentItemName = playingState.originalPlaylistItems[playingState.currentPlaylistItemIndex].name || currentItemName;
-                     }
-                    sendPlaybackTimeUpdateRef(cueId, currentItemSound, playingState, currentItemName, currentItemSound.playing() ? 'playing' : 'paused_seek');
-                }
-            }
-        } else {
-            // Single file cue
-            playingState.sound.seek(positionSec);
-            if (sendPlaybackTimeUpdateRef) {
-                sendPlaybackTimeUpdateRef(cueId, playingState.sound, playingState, playingState.cue.name, playingState.sound.playing() ? 'playing' : 'paused_seek');
-            }
-        }
-    } else {
-        console.warn(`AudioPlaybackManager: seekInCue called for ${cueId}, but no playing sound found.`);
+    if (!playingState?.sound) return persist;
+
+    playingState.originalVolume = clamped;
+
+    let targetVolume = clamped;
+    if (playingState.isDucked) {
+        const triggerCue = getGlobalCueByIdRef?.(playingState.activeDuckingTriggerId);
+        const duckingLevel = triggerCue?.duckingLevel !== undefined ? triggerCue.duckingLevel : 80;
+        targetVolume = clamped * (1 - duckingLevel / 100);
     }
+
+    playingState.sound.volume(targetVolume);
+
+    const sound = playingState.sound;
+    let status = 'playing';
+    if (playingState.isPaused) {
+        status = 'paused';
+    } else if (!playingState.isScrubbing && !sound.playing()) {
+        status = 'stopped';
+    }
+    sendSeekPlaybackUpdate(cueId, playingState, sound, status, context);
+    return true;
+}
+
+function getActiveSound(playingState) {
+    return playingState?.sound || null;
+}
+
+function getTargetVolumeForState(playingState, context) {
+    const { getGlobalCueByIdRef } = context;
+    let target = playingState.originalVolume ?? 1;
+    if (playingState.isDucked) {
+        const triggerCue = getGlobalCueByIdRef?.(playingState.activeDuckingTriggerId);
+        const duckPct = triggerCue?.duckingLevel ?? 80;
+        target = target * (1 - duckPct / 100);
+    }
+    return Math.max(0, Math.min(1, target));
+}
+
+export function prepareScrubInCue(cueId, context) {
+    const { currentlyPlaying } = context;
+    const playingState = currentlyPlaying[cueId];
+    const sound = getActiveSound(playingState);
+    if (!sound) return;
+
+    if (!playingState.isScrubbing) {
+        playingState.isScrubbing = true;
+        playingState.scrubRestoreVolume = sound.volume();
+    }
+    sound.volume(0);
+}
+
+function finishScrubInCue(playingState, sound, context) {
+    if (!playingState?.isScrubbing) return;
+    const restoreVolume = playingState.scrubRestoreVolume ?? getTargetVolumeForState(playingState, context);
+    playingState.isScrubbing = false;
+    playingState.scrubRestoreVolume = null;
+    sound.volume(restoreVolume);
+}
+
+function rescheduleTrimAfterSeek(cueId, sound, playingState, cue, context) {
+    if (!cue || !sound) return;
+    if (playingState.trimEndTimer) {
+        clearTimeout(playingState.trimEndTimer);
+        playingState.trimEndTimer = null;
+    }
+    const filePath = cue.filePath || playingState.currentFilePath;
+    if (!filePath) return;
+    scheduleTrimEndEnforcement(cueId, sound, playingState, cue, filePath, {
+        currentlyPlaying: context.currentlyPlaying,
+        getGlobalCueById: context.getGlobalCueByIdRef
+    });
+}
+
+function applySeekToSound(cueId, playingState, sound, clampedPosition, context, options = {}) {
+    const { finalizeScrub = true } = options;
+    const { getGlobalCueByIdRef } = context;
+    const cue = playingState.cue || getGlobalCueByIdRef?.(cueId);
+    const wasAudible = sound.playing() && !playingState.isPaused;
+
+    if (wasAudible && !playingState.isScrubbing) {
+        prepareScrubInCue(cueId, context);
+    }
+
+    sound.seek(clampedPosition);
+
+    if (wasAudible && cue) {
+        rescheduleTrimAfterSeek(cueId, sound, playingState, cue, context);
+    }
+
+    if (finalizeScrub) {
+        finishScrubInCue(playingState, sound, context);
+    }
+
+    const status = sound.playing()
+        ? 'playing'
+        : (playingState.isPaused ? 'paused' : 'paused_seek');
+    sendSeekPlaybackUpdate(cueId, playingState, sound, status, context);
+}
+
+export function seekInCue(cueId, positionSec, context, options = {}) {
+    const {
+        currentlyPlaying,
+        getGlobalCueByIdRef
+    } = context;
+    const { finalizeScrub = true, coalesceMs = 0 } = options;
+
+    const playingState = currentlyPlaying[cueId];
+    const sound = getActiveSound(playingState);
+    if (!playingState || !sound) {
+        console.warn(`AudioPlaybackManager: seekInCue called for ${cueId}, but no playing sound found.`);
+        return;
+    }
+
+    const cue = playingState.cue || getGlobalCueByIdRef?.(cueId);
+    const clampedPosition = clampSeekPosition(positionSec, cue);
+
+    if (coalesceMs > 0 && !finalizeScrub) {
+        const existing = pendingSeekTimers.get(cueId);
+        if (existing) clearTimeout(existing.timer);
+        const timer = setTimeout(() => {
+            pendingSeekTimers.delete(cueId);
+            applySeekToSound(cueId, playingState, sound, clampedPosition, context, { finalizeScrub: false });
+        }, coalesceMs);
+        pendingSeekTimers.set(cueId, { timer, positionSec: clampedPosition });
+        return;
+    }
+
+    if (finalizeScrub) {
+        const pending = pendingSeekTimers.get(cueId);
+        if (pending) {
+            clearTimeout(pending.timer);
+            pendingSeekTimers.delete(cueId);
+        }
+    }
+
+    applySeekToSound(cueId, playingState, sound, clampedPosition, context, { finalizeScrub });
 }
 
 export function stopAllCues(options = { exceptCueId: null, useFade: true }, context) {

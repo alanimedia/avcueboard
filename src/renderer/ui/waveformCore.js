@@ -28,6 +28,11 @@ let onTrimChangeCallback = null;
 // External playback sync (Howler -> WaveSurfer playhead)
 let lastExternalSyncRawTime = -1;
 let lastExternalSyncAt = 0;
+let onSeekPlaybackCallback = null;
+let onPrepareScrubCallback = null;
+let isUserSeekingPlayback = false;
+let isSyncingExternalPlayhead = false;
+let userSeekingClearTimeout = null;
 
 // Waveform initialization with debouncing
 let waveformInitTimeout = null;
@@ -48,6 +53,12 @@ function initWaveformCore(dependencies) {
     wfRemainingTime = dependencies.wfRemainingTime;
     ipcRendererBindingsModule = dependencies.ipcRendererBindings;
     onTrimChangeCallback = dependencies.onTrimChange;
+    if (typeof dependencies.onSeekPlayback === 'function') {
+        onSeekPlaybackCallback = dependencies.onSeekPlayback;
+    }
+    if (typeof dependencies.onPrepareScrub === 'function') {
+        onPrepareScrubCallback = dependencies.onPrepareScrub;
+    }
     
     console.log('WaveformCore: Initialized with dependencies:', {
         wavesurferInstance: !!wavesurferInstance,
@@ -74,9 +85,32 @@ function updateDependencies(dependencies) {
     if (dependencies.currentAudioFilePath !== undefined) {
         currentAudioFilePath = dependencies.currentAudioFilePath;
     }
+    if (dependencies.onSeekPlayback !== undefined) {
+        onSeekPlaybackCallback = dependencies.onSeekPlayback;
+    }
     if (dependencies.onTrimChange !== undefined) {
         onTrimChangeCallback = dependencies.onTrimChange;
     }
+}
+
+function markUserSeekingPlayback() {
+    isUserSeekingPlayback = true;
+    clearTimeout(userSeekingClearTimeout);
+    userSeekingClearTimeout = setTimeout(() => {
+        isUserSeekingPlayback = false;
+    }, 350);
+}
+
+function invokePrepareScrub(cueId) {
+    if (typeof onPrepareScrubCallback === 'function' && cueId != null) {
+        onPrepareScrubCallback(cueId);
+    }
+}
+
+function invokeSeekPlayback(cueId, seekTimeSec, options = {}) {
+    if (typeof onSeekPlaybackCallback !== 'function' || cueId == null) return;
+    markUserSeekingPlayback();
+    onSeekPlaybackCallback(cueId, seekTimeSec, options);
 }
 
 /**
@@ -452,27 +486,48 @@ function setupCoreWaveformEvents(cue, regionsPlugin, setupRegionEventsCallback, 
         }
     });
     
-    // Handle clicks for seeking
+    // Handle clicks for seeking — WaveSurfer also emits `seek` for click/drag; avoid double seek.
     wavesurferInstance.on('click', (relativeX) => {
         if (!wavesurferInstance) return;
-        
         const duration = wavesurferInstance.getDuration();
         const seekTime = relativeX * duration;
-        
         if (seekTime >= 0 && seekTime <= duration) {
-            console.log('WaveformCore: Seeking to', seekTime);
             syncPlaybackTimeWithUI(seekTime);
-            
-            // Focus the waveform for keyboard controls
             if (waveformDisplayDiv) {
                 waveformDisplayDiv.focus();
             }
-            
-            if (typeof seekInAudioController === 'function') {
-                seekInAudioController(cue.id, seekTime);
-            }
         }
     });
+
+    wavesurferInstance.on('interaction', () => {
+        if (cue?.id) {
+            invokePrepareScrub(cue.id);
+            markUserSeekingPlayback();
+        }
+    });
+
+    wavesurferInstance.on('seek', (progress) => {
+        if (!wavesurferInstance || isSyncingExternalPlayhead || !cue?.id) return;
+        const duration = wavesurferInstance.getDuration();
+        if (!duration) return;
+        const seekTime = progress * duration;
+        if (seekTime >= 0 && seekTime <= duration) {
+            syncPlaybackTimeWithUI(seekTime);
+            invokeSeekPlayback(cue.id, seekTime, { finalizeScrub: false, coalesceMs: 60 });
+        }
+    });
+
+    if (waveformDisplayDiv) {
+        const finalizeWaveformSeek = () => {
+            if (!wavesurferInstance || !cue?.id) return;
+            const seekTime = wavesurferInstance.getCurrentTime?.();
+            if (typeof seekTime === 'number') {
+                invokeSeekPlayback(cue.id, seekTime, { finalizeScrub: true });
+            }
+        };
+        waveformDisplayDiv.addEventListener('pointerup', finalizeWaveformSeek);
+        waveformDisplayDiv.addEventListener('pointercancel', finalizeWaveformSeek);
+    }
     
     // Handle playback state changes
     wavesurferInstance.on('play', () => { 
@@ -512,6 +567,7 @@ function updateExternalPlaybackTimeLabels(currentTimeSec, totalDurationSec) {
  */
 function syncPlayheadFromPlayback(payload) {
     if (!wavesurferInstance) return;
+    if (isUserSeekingPlayback) return;
     if (wavesurferInstance.isPlaying()) return;
 
     const {
@@ -534,7 +590,9 @@ function syncPlayheadFromPlayback(payload) {
     if (status === 'stopped') {
         lastExternalSyncRawTime = -1;
         const startRatio = Math.min(1, Math.max(0, (trimStartTime || 0) / fullDuration));
+        isSyncingExternalPlayhead = true;
         wavesurferInstance.seekTo(startRatio);
+        requestAnimationFrame(() => { isSyncingExternalPlayhead = false; });
         updateExternalPlaybackTimeLabels(0, totalDurationSec);
         return;
     }
@@ -551,7 +609,9 @@ function syncPlayheadFromPlayback(payload) {
     lastExternalSyncRawTime = rawTime;
     lastExternalSyncAt = now;
 
+    isSyncingExternalPlayhead = true;
     wavesurferInstance.seekTo(Math.min(1, Math.max(0, rawTime / fullDuration)));
+    requestAnimationFrame(() => { isSyncingExternalPlayhead = false; });
     updateExternalPlaybackTimeLabels(currentTimeSec, totalDurationSec);
 }
 

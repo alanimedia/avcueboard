@@ -18,6 +18,9 @@ let panelHeight = 140;
 let getAppConfigFn = null;
 let savePartialConfigFn = null;
 let getCueByIdFn = null;
+let seekCueFn = null;
+let setCueVolumeFn = null;
+let prepareScrubFn = null;
 
 const MIN_PANEL_HEIGHT = 72;
 const MAX_PANEL_HEIGHT_RATIO = 0.55;
@@ -37,6 +40,9 @@ function init(dependencies) {
     getAppConfigFn = dependencies.getAppConfig;
     savePartialConfigFn = dependencies.savePartialConfig;
     getCueByIdFn = dependencies.getCueById;
+    seekCueFn = dependencies.seekCue || null;
+    setCueVolumeFn = dependencies.setCueVolume || null;
+    prepareScrubFn = dependencies.prepareScrub || null;
 
     bindResizeHandle();
     bindHeaderControls();
@@ -153,13 +159,17 @@ function syncLanesLayout() {
     if (!displayEl) return;
     const count = Math.max(lanes.size, 1);
     const available = Math.max(MIN_LANE_BODY_HEIGHT, panelHeight - PANEL_HEADER_HEIGHT);
-    const showLaneHeaders = lanes.size > 1;
+    const showLaneHeaders = lanes.size > 0;
     const laneHeaderTotal = showLaneHeaders ? LANE_HEADER_HEIGHT : 0;
     const perLaneBody = Math.max(MIN_LANE_BODY_HEIGHT, Math.floor(available / count) - laneHeaderTotal);
 
     lanes.forEach((lane) => {
         if (lane.headerEl) {
             lane.headerEl.style.display = showLaneHeaders ? 'flex' : 'none';
+            const laneTimeEl = lane.headerEl.querySelector('.main-waveform-lane-time');
+            if (laneTimeEl) {
+                laneTimeEl.style.display = lanes.size > 1 ? '' : 'none';
+            }
         }
         if (lane.bodyEl) {
             lane.bodyEl.style.height = `${perLaneBody}px`;
@@ -174,6 +184,7 @@ function syncLanesLayout() {
     });
 
     displayEl.classList.toggle('multi-lane', lanes.size > 1);
+    displayEl.classList.toggle('has-lanes', lanes.size > 0);
 }
 
 function setPanelHeight(height) {
@@ -233,10 +244,25 @@ function createLane(cue) {
     headerEl.className = 'main-waveform-lane-header';
     headerEl.innerHTML = `
         <span class="main-waveform-lane-name"></span>
-        <span class="main-waveform-lane-time"></span>
+        <span class="main-waveform-lane-controls">
+            <input type="range" class="main-waveform-lane-volume" min="0" max="100" step="1" title="Volume">
+            <span class="main-waveform-lane-time"></span>
+        </span>
     `;
     headerEl.querySelector('.main-waveform-lane-name').textContent = cue.name || 'Cue';
     const laneTimeEl = headerEl.querySelector('.main-waveform-lane-time');
+    const laneVolumeEl = headerEl.querySelector('.main-waveform-lane-volume');
+    if (laneVolumeEl) {
+        const volPct = Math.round((cue.volume !== undefined ? cue.volume : 1) * 100);
+        laneVolumeEl.value = String(volPct);
+        laneVolumeEl.addEventListener('input', (event) => {
+            event.stopPropagation();
+            if (!setCueVolumeFn) return;
+            setCueVolumeFn(cue.id, parseInt(laneVolumeEl.value, 10) / 100, { persist: true });
+        });
+        laneVolumeEl.addEventListener('mousedown', (event) => event.stopPropagation());
+        laneVolumeEl.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+    }
 
     const bodyEl = document.createElement('div');
     bodyEl.className = 'main-waveform-lane-body';
@@ -252,8 +278,12 @@ function createLane(cue) {
         headerEl,
         bodyEl,
         timeEl: laneTimeEl,
+        volumeEl: laneVolumeEl,
         lastRawTime: -1,
-        lastSyncAt: 0
+        lastSyncAt: 0,
+        isUserSeeking: false,
+        isSyncingExternalPlayhead: false,
+        userSeekingTimeout: null
     };
     lanes.set(cue.id, lane);
 
@@ -273,8 +303,43 @@ function createLane(cue) {
             normalize: true,
             backend: 'WebAudio',
             mediaControls: false,
-            interact: false
+            interact: true
         });
+
+        const markLaneUserSeeking = () => {
+            lane.isUserSeeking = true;
+            clearTimeout(lane.userSeekingTimeout);
+            lane.userSeekingTimeout = setTimeout(() => {
+                lane.isUserSeeking = false;
+            }, 350);
+        };
+
+        const seekLanePlayback = (progress, options = {}) => {
+            if (!seekCueFn || lane.isSyncingExternalPlayhead) return;
+            const duration = lane.wavesurfer.getDuration();
+            if (!duration) return;
+            markLaneUserSeeking();
+            seekCueFn(cue.id, progress * duration, options);
+        };
+
+        lane.wavesurfer.on('interaction', () => {
+            prepareScrubFn?.(cue.id);
+            markLaneUserSeeking();
+        });
+
+        lane.wavesurfer.on('seek', (progress) => {
+            seekLanePlayback(progress, { finalizeScrub: false, coalesceMs: 60 });
+        });
+
+        const finalizeLaneSeek = () => {
+            if (!seekCueFn || lane.isSyncingExternalPlayhead) return;
+            const duration = lane.wavesurfer.getDuration();
+            if (!duration || typeof lane.wavesurfer.getCurrentTime !== 'function') return;
+            seekCueFn(cue.id, lane.wavesurfer.getCurrentTime(), { finalizeScrub: true });
+        };
+
+        bodyEl.addEventListener('pointerup', finalizeLaneSeek);
+        bodyEl.addEventListener('pointercancel', finalizeLaneSeek);
 
         lane.wavesurfer.on('ready', () => {
             const duration = lane.wavesurfer.getDuration();
@@ -301,7 +366,7 @@ function createLane(cue) {
 
 function syncLanePlayhead(cueId, payload) {
     const lane = lanes.get(cueId);
-    if (!lane?.wavesurfer || lane.wavesurfer.isPlaying()) return;
+    if (!lane?.wavesurfer || lane.wavesurfer.isPlaying() || lane.isUserSeeking) return;
 
     const cue = lane.cue;
     const {
@@ -320,7 +385,9 @@ function syncLanePlayhead(cueId, payload) {
     if (status === 'stopped') {
         lane.lastRawTime = -1;
         const startRatio = Math.min(1, Math.max(0, (trimStartTime || 0) / fullDuration));
+        lane.isSyncingExternalPlayhead = true;
         lane.wavesurfer.seekTo(startRatio);
+        requestAnimationFrame(() => { lane.isSyncingExternalPlayhead = false; });
         if (lanes.size === 1) {
             updateMainTimeLabels(0, totalDurationSec);
         } else if (lane.timeEl) {
@@ -333,13 +400,21 @@ function syncLanePlayhead(cueId, payload) {
 
     const rawTime = (trimStartTime || 0) + Math.max(0, currentTimeSec);
     const now = performance.now();
+
+    if (lane.volumeEl && document.activeElement !== lane.volumeEl) {
+        const vol = typeof payload?.volume === 'number' ? payload.volume : (cue?.volume ?? 1);
+        lane.volumeEl.value = String(Math.round(Math.max(0, Math.min(1, vol)) * 100));
+    }
+
     if (Math.abs(rawTime - lane.lastRawTime) < 0.03 && now - lane.lastSyncAt < 50) {
         return;
     }
     lane.lastRawTime = rawTime;
     lane.lastSyncAt = now;
 
+    lane.isSyncingExternalPlayhead = true;
     lane.wavesurfer.seekTo(Math.min(1, Math.max(0, rawTime / fullDuration)));
+    requestAnimationFrame(() => { lane.isSyncingExternalPlayhead = false; });
 
     if (lanes.size === 1) {
         updateMainTimeLabels(currentTimeSec, totalDurationSec);

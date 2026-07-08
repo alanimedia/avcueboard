@@ -466,7 +466,14 @@ function renderCues() {
 
         const appConfig = getAppConfigForWaveform();
         if (shouldShowButtonWaveform(cue, appConfig)) {
-            ensureButtonWaveform(button, cue, (filePath) => uiCore.getOrGenerateWaveformPeaks(filePath), appConfig);
+            ensureButtonWaveform(
+                button,
+                cue,
+                (filePath) => uiCore.getOrGenerateWaveformPeaks(filePath),
+                appConfig,
+                (cueId, positionSec, options) => audioController?.default?.seek?.(cueId, positionSec, options),
+                (cueId) => audioController?.default?.prepareScrubSeek?.(cueId)
+            );
         } else {
             removeButtonWaveform(button);
         }

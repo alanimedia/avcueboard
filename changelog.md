@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.5
+
+### Added
+- **Live volume** control during playback on main waveform panel, properties sidebar, cue-button waveforms, and web remote lanes
+- **Waveform seek/scrub** during playback on Electron (main panel, properties, cue buttons) and web remote (pointer drag with prepare/finalize scrub)
+- Remote HTTP/WebSocket actions: `prepare_seek`, `seek_cue`, `set_cue_volume`
+- IPC channels for remote-driven seek and volume from main process
+
+### Changed
+- Volume-only cue saves use silent disk write (no `all_cues` broadcast) to avoid disrupting remotes during live mixing
+- Web remote patches cue buttons in place on metadata-only `all_cues` updates instead of full grid rebuild
+
+### Fixed
+- Web remote cue button flashing between green and custom color when adjusting live volume on waveform lanes
+- Seek audio glitch on web/iPad (~0.25–0.5s of old audio before jump) via mute-on-down and coalesced scrub seeks
+
 ## 1.5.4
 
 ### Added

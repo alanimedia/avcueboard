@@ -11,6 +11,8 @@ import * as WaveformExpanded from './waveformExpanded.js';
 // Dependencies from other modules (will be set in init)
 let ipcRendererBindingsModule;
 let onTrimChangeCallback = null; // Callback for trim changes
+let onSeekPlaybackCallback = null;
+let onPrepareScrubCallback = null;
 
 // --- Initialization ---
 
@@ -39,6 +41,13 @@ function initWaveformControls(dependencies) {
         onTrimChangeCallback = null;
     }
 
+    if (typeof dependencies.onSeekPlayback === 'function') {
+        onSeekPlaybackCallback = dependencies.onSeekPlayback;
+    }
+    if (typeof dependencies.onPrepareScrub === 'function') {
+        onPrepareScrubCallback = dependencies.onPrepareScrub;
+    }
+
     // Initialize the core module first
     initializeCoreModule();
     
@@ -65,7 +74,9 @@ function initializeCoreModule() {
         wfTotalDuration: document.getElementById('wfTotalDuration'),
         wfRemainingTime: document.getElementById('wfRemainingTime'),
         ipcRendererBindings: ipcRendererBindingsModule,
-        onTrimChange: onTrimChangeCallback
+        onTrimChange: onTrimChangeCallback,
+        onSeekPlayback: onSeekPlaybackCallback,
+        onPrepareScrub: onPrepareScrubCallback
     });
     
     console.log('WaveformControls: Core module initialized');

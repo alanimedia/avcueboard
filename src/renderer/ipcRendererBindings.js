@@ -344,6 +344,30 @@ function setupOtherListeners() {
             console.error('IPC Binding: audioControllerRef.playlistJumpToItem not available for external navigation');
         }
     });
+
+    electronAPIInstance.on('prepare-seek-cue-by-id-from-main', ({ cueId }) => {
+        const ac = audioControllerRef?.default || audioControllerRef;
+        if (ac && typeof ac.prepareScrubSeek === 'function' && cueId != null) {
+            ac.prepareScrubSeek(cueId);
+        }
+    });
+
+    electronAPIInstance.on('seek-cue-by-id-from-main', ({ cueId, positionSec, finalizeScrub }) => {
+        const ac = audioControllerRef?.default || audioControllerRef;
+        if (ac && typeof ac.seek === 'function' && cueId != null && positionSec != null) {
+            ac.seek(cueId, positionSec, {
+                finalizeScrub: finalizeScrub !== false,
+                coalesceMs: finalizeScrub === false ? 60 : 0
+            });
+        }
+    });
+
+    electronAPIInstance.on('set-cue-volume-by-id-from-main', ({ cueId, volume, persist }) => {
+        const ac = audioControllerRef?.default || audioControllerRef;
+        if (ac && typeof ac.setVolume === 'function' && cueId != null && volume != null) {
+            ac.setVolume(cueId, volume, { persist: persist !== false });
+        }
+    });
 }
 
 // Note: ipcRendererBindings itself no longer directly calls audioController methods like playCueById, stopCue, etc.

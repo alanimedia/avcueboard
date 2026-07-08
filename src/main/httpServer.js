@@ -123,6 +123,46 @@ async function handleRemoteMessage(ws, message) {
             return;
         }
 
+        if (action === 'prepare_seek' && parsedMessage.cueId) {
+            if (mainWindowRef && mainWindowRef.webContents) {
+                mainWindowRef.webContents.send('prepare-seek-cue-by-id-from-main', {
+                    cueId: parsedMessage.cueId
+                });
+            }
+            return;
+        }
+
+        if (action === 'seek_cue' && parsedMessage.cueId != null && parsedMessage.positionSec != null) {
+            if (mainWindowRef && mainWindowRef.webContents) {
+                mainWindowRef.webContents.send('seek-cue-by-id-from-main', {
+                    cueId: parsedMessage.cueId,
+                    positionSec: Number(parsedMessage.positionSec),
+                    finalizeScrub: parsedMessage.finalizeScrub !== false
+                });
+            }
+            return;
+        }
+
+        if (action === 'set_cue_volume' && parsedMessage.cueId != null && parsedMessage.volume != null) {
+            const volume = Math.max(0, Math.min(1, Number(parsedMessage.volume)));
+            if (mainWindowRef && mainWindowRef.webContents) {
+                mainWindowRef.webContents.send('set-cue-volume-by-id-from-main', {
+                    cueId: parsedMessage.cueId,
+                    volume,
+                    persist: parsedMessage.persist !== false
+                });
+            }
+            if (parsedMessage.persist !== false && cueManagerRef) {
+                const existingCue = cueManagerRef.getCueById(parsedMessage.cueId);
+                if (existingCue) {
+                    cueManagerRef.addOrUpdateProcessedCue({ ...existingCue, volume }, null, { silentSave: true }).catch((err) => {
+                        logger.error('HTTP_SERVER: Failed to persist live volume patch:', err);
+                    });
+                }
+            }
+            return;
+        }
+
         if (action === 'request_all_cues_for_remote') {
             if (cueManagerRef) {
                 sendToClient(ws, formatWorkspaceBroadcast(cueManagerRef));
@@ -142,7 +182,12 @@ async function handleRemoteMessage(ws, message) {
                 return;
             }
             const mergedCue = mergeCuePatch(existingCue, parsedMessage.patch || {});
-            await cueManagerRef.addOrUpdateProcessedCue(mergedCue);
+            const patch = parsedMessage.patch || {};
+            const patchKeys = Object.keys(patch);
+            const volumeOnlyPatch = patchKeys.length === 1
+                && patchKeys[0] === 'volume'
+                && typeof patch.volume === 'number';
+            await cueManagerRef.addOrUpdateProcessedCue(mergedCue, null, { silentSave: volumeOnlyPatch });
             if (workspaceManagerRef && typeof workspaceManagerRef.markWorkspaceAsEdited === 'function') {
                 workspaceManagerRef.markWorkspaceAsEdited();
             }
