@@ -2,6 +2,7 @@ import * as waveformControls from './waveformControls.js'; // Import the new mod
 import { formatWaveformTime } from './waveformControls.js';
 import { debounce } from './utils.js'; // Import debounce
 import { uiLog } from './uiLogger.js';
+import { getDroppedFilePath } from '../droppedFileUtils.js';
 
 let cueStore;
 let audioController;
@@ -464,15 +465,19 @@ function handlePropPlaylistFileSelect(event) {
     const files = event.target.files;
     if (!files || files.length === 0 || !ipcRendererBindingsModule) return;
 
-    const newItemsPromises = Array.from(files).map(async (file) => ({
-        id: await ipcRendererBindingsModule.generateUUID(), // Generate UUID for each item
-        path: file.path, 
-        name: file.name,
-        knownDuration: await ipcRendererBindingsModule.getMediaDuration(file.path) // Get duration
-    }));
+    const newItemsPromises = Array.from(files).map(async (file) => {
+        const filePath = getDroppedFilePath(file);
+        if (!filePath) return null;
+        return {
+            id: await ipcRendererBindingsModule.generateUUID(),
+            path: filePath,
+            name: file.name,
+            knownDuration: await ipcRendererBindingsModule.getMediaDuration(filePath)
+        };
+    });
 
     Promise.all(newItemsPromises).then(resolvedNewItems => {
-        stagedPlaylistItems.push(...resolvedNewItems);
+        stagedPlaylistItems.push(...resolvedNewItems.filter(Boolean));
         renderPlaylistInProperties();
     });
     

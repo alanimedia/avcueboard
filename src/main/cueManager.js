@@ -5,6 +5,7 @@ const { app } = require('electron'); // Required for app.getPath('userData')
 const { v4: uuidv4 } = require('uuid');
 const logger = require('./utils/logger');
 const { getAudioFileDuration } = require('./utils/audioFileUtils');
+const { normalizeCueAudioPaths } = require('./utils/audioPathUtils');
 const {
   migrateToV2,
   repairWorkspace,
@@ -76,6 +77,8 @@ async function loadCuesFromFile() {
     const wasV1Array = Array.isArray(parsed);
     const workspace = migrateToV2(parsed);
     const defaultRetrigger = appConfig.getConfig()?.defaultRetriggerBehavior || 'restart';
+    const workspaceDir = getWorkspaceDirectory();
+    let pathsChanged = false;
     cues = workspace.cues.map(cue => {
       const migratedCue = migrateCueRetriggerStorage({
         ...cue,
@@ -86,13 +89,24 @@ async function loadCuesFromFile() {
       if (migratedCue.hasOwnProperty('x32Trigger')) {
         delete migratedCue.x32Trigger;
       }
-      return migratedCue;
+      const normalizedCue = normalizeCueAudioPaths(migratedCue, workspaceDir);
+      if (normalizedCue.filePath !== migratedCue.filePath) pathsChanged = true;
+      if (Array.isArray(normalizedCue.playlistItems) && Array.isArray(migratedCue.playlistItems)) {
+        normalizedCue.playlistItems.forEach((item, index) => {
+          const original = migratedCue.playlistItems[index];
+          if (original && item.path !== original.path) pathsChanged = true;
+        });
+      }
+      return normalizedCue;
     });
     sections = workspace.sections;
     layout = repairWorkspace({ ...workspace, cues }).layout;
     logger.info('Cues loaded from file:', currentCuesFilePath);
     if (wasV1Array) {
       logger.info('CueManager: Migrated v1 cues array to v2 workspace format.');
+      await saveCuesToFile(true);
+    } else if (pathsChanged) {
+      logger.info('CueManager: Normalized audio file paths during load. Saving workspace.');
       await saveCuesToFile(true);
     }
   } catch (error) {
@@ -319,12 +333,13 @@ async function initialize(wssInstance, mainWin, httpServerRef) {
   // Post-load processing for durations
   let durationsChanged = false;
   const processedCues = [...cues]; // Work on a copy to modify
+  const workspaceDir = getWorkspaceDirectory();
 
   for (let i = 0; i < processedCues.length; i++) {
     const cue = processedCues[i];
     if (cue.type === 'single_file' && cue.filePath && (!cue.knownDuration || cue.knownDuration <= 0)) {
       logger.info(`CueManager Init: Processing duration for single file cue ${cue.id} - Path: ${cue.filePath}`);
-      const duration = await getAudioFileDuration(cue.filePath);
+      const duration = await getAudioFileDuration(cue.filePath, workspaceDir);
       if (duration && duration > 0) {
         processedCues[i] = { ...cue, knownDuration: duration };
         durationsChanged = true;
@@ -338,7 +353,7 @@ async function initialize(wssInstance, mainWin, httpServerRef) {
         const item = updatedPlaylistItems[j];
         if (item.path && (!item.knownDuration || item.knownDuration <= 0)) {
           logger.info(`CueManager Init: Processing duration for playlist item ${item.path} in cue ${cue.id}`);
-          const itemDuration = await getAudioFileDuration(item.path);
+          const itemDuration = await getAudioFileDuration(item.path, workspaceDir);
           if (itemDuration && itemDuration > 0) {
             updatedPlaylistItems[j] = { ...item, knownDuration: itemDuration };
             playlistItemsChanged = true;
@@ -471,6 +486,8 @@ async function addOrUpdateProcessedCue(cueData, workspacePath, options = {}) {
     ? normalizeRetriggerBehaviorOverride(cleanCueData.retriggerBehavior)
     : normalizeRetriggerBehaviorOverride(existingCue?.retriggerBehavior);
 
+  const workspaceDir = workspacePath || getWorkspaceDirectory();
+
   const baseCue = {
     id: cueId,
     name: mergedCueData.name || 'Unnamed Cue',
@@ -497,6 +514,9 @@ async function addOrUpdateProcessedCue(cueData, workspacePath, options = {}) {
         : (mergedCueData.showButtonWaveform === false ? false : null),
   };
 
+  const normalizedCue = normalizeCueAudioPaths(baseCue, workspaceDir);
+  Object.assign(baseCue, normalizedCue);
+
   // Ensure playlist items have unique IDs and knownDurations if not present
   if (baseCue.type === 'playlist' && baseCue.playlistItems) {
     baseCue.playlistItems.forEach(item => {
@@ -516,7 +536,7 @@ async function addOrUpdateProcessedCue(cueData, workspacePath, options = {}) {
   if (baseCue.type === 'single_file' && baseCue.filePath && (!baseCue.knownDuration || baseCue.knownDuration <= 0)) {
     logger.info(`CueManager: Detecting duration for new single file cue ${baseCue.id}`);
     try {
-      const duration = await getAudioFileDuration(baseCue.filePath);
+      const duration = await getAudioFileDuration(baseCue.filePath, workspaceDir);
       if (duration && duration > 0) {
         baseCue.knownDuration = duration;
         durationsDetected = true;
@@ -534,7 +554,7 @@ async function addOrUpdateProcessedCue(cueData, workspacePath, options = {}) {
       if (item.path && (!item.knownDuration || item.knownDuration <= 0)) {
         logger.info(`CueManager: Detecting duration for playlist item ${item.path}`);
         try {
-          const itemDuration = await getAudioFileDuration(item.path);
+          const itemDuration = await getAudioFileDuration(item.path, workspaceDir);
           if (itemDuration && itemDuration > 0) {
             baseCue.playlistItems[i].knownDuration = itemDuration;
             durationsDetected = true;
@@ -632,6 +652,14 @@ function getDefaultCuesPath() {
   return path.join(app.getPath('userData'), CUES_FILE_NAME);
 }
 
+function getCuesFilePath() {
+  return currentCuesFilePath;
+}
+
+function getWorkspaceDirectory() {
+  return path.dirname(currentCuesFilePath);
+}
+
 module.exports = {
   initialize,
   setCuesDirectory,
@@ -657,5 +685,7 @@ module.exports = {
   updateCueKnownDuration,
   updateCueItemDuration,
   triggerCueById,
-  getDefaultCuesPath
+  getDefaultCuesPath,
+  getCuesFilePath,
+  getWorkspaceDirectory
 };

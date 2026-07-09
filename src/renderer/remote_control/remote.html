@@ -707,6 +707,54 @@
         .cue-loop-badge.visible {
             display: inline-flex;
         }
+        .cue-trim-badge {
+            min-width: 22px;
+            height: 16px;
+            padding: 0 3px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.55);
+            color: #fbbf24;
+            font-size: 0.72rem;
+            font-weight: 400;
+            font-family: Georgia, 'Times New Roman', serif;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(251, 191, 36, 0.45);
+            pointer-events: none;
+            line-height: 1;
+            letter-spacing: -0.02em;
+        }
+        .cue-trim-badge b,
+        .cue-trim-badge .trim-brace-active {
+            font-weight: 800;
+            color: #fcd34d;
+        }
+        .cue-trim-badge .trim-brace-inactive,
+        .cue-trim-badge .trim-brace:not(.trim-brace-active) {
+            font-weight: 400;
+            color: rgba(156, 163, 175, 0.85);
+        }
+        .cue-trim-badge .trim-brace-gap {
+            display: inline-block;
+            width: 0.65em;
+        }
+        .cue-trim-badge.visible {
+            display: inline-flex;
+        }
+        .cue-edit-loop-trim-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            justify-self: end;
+        }
+        .cue-trim-badge.trim-badge-saved-flash {
+            animation: trim-badge-saved-pulse 1.2s ease;
+        }
+        @keyframes trim-badge-saved-pulse {
+            0%, 100% { box-shadow: none; }
+            35%, 65% { box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.95); border-color: #22c55e; }
+        }
         .cue-button-remote.has-custom-color:not(.playing):not(.paused):not(.cued) .cue-retrigger-icon:not(.icon-image) {
             color: var(--cue-custom-fg, #e0e0e0);
             background-color: color-mix(in srgb, var(--cue-custom-fg, #e0e0e0) 18%, transparent);
@@ -897,17 +945,15 @@
         }
         .cue-edit-color-swatches {
             display: flex;
-            flex-direction: column;
-            gap: 4px;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 5px;
+            align-items: center;
             flex-shrink: 0;
             padding-right: 34px;
         }
         .cue-edit-color-row {
-            display: flex;
-            flex-wrap: nowrap;
-            align-items: center;
-            gap: 4px;
-            min-height: 15px;
+            display: contents;
         }
         .cue-edit-color-row-recent {
             opacity: 0.95;
@@ -1088,12 +1134,38 @@
             right: 0;
             width: min(420px, 96vw);
             height: 100vh;
+            height: 100dvh;
             background: #2a2a2a;
             border-left: 2px solid #555;
             z-index: 902;
-            overflow-y: auto;
-            padding: 16px;
+            overflow: hidden;
+            padding: 0;
             box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+        }
+        .remote-cue-properties-panel > .remote-settings-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            float: none;
+            z-index: 3;
+            padding: 4px 8px;
+        }
+        .remote-cue-properties-header {
+            flex: 0 0 auto;
+            padding: 16px 40px 8px 16px;
+            border-bottom: 1px solid #444;
+        }
+        .remote-cue-properties-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 12px 16px 48px;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
+            overscroll-behavior: contain;
         }
         .remote-cue-properties-panel h2 {
             margin: 0 0 4px;
@@ -1155,6 +1227,40 @@
             align-items: center;
             gap: 8px;
             flex-wrap: wrap;
+        }
+        #cuePropColorPresets.remote-cue-color-swatches {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        #cuePropColorPresets.remote-cue-color-swatches .cue-color-swatch {
+            width: 28px;
+            height: 28px;
+            min-width: 28px;
+            border-radius: 6px;
+        }
+        .remote-prop-waveform-wrap {
+            margin-top: 6px;
+        }
+        .remote-prop-waveform-wrap.hidden {
+            display: none;
+        }
+        .remote-prop-waveform-hint {
+            font-size: 0.75em;
+            color: #9ca3af;
+            margin-bottom: 6px;
+        }
+        .remote-prop-waveform-canvas {
+            width: 100%;
+            height: 128px;
+            display: block;
+            border: 1px solid #555;
+            border-radius: 6px;
+            background: #1e1e1e;
+            touch-action: none;
+            cursor: ew-resize;
         }
         .remote-cue-properties-panel .color-preview-btn {
             width: 36px;
@@ -1354,8 +1460,11 @@
 
     <div id="remoteCuePropertiesPanel" class="remote-cue-properties-panel hidden">
         <button type="button" id="remoteCuePropertiesClose" class="remote-settings-close" title="Close">&times;</button>
-        <h2 id="cuePropTitle">Cue Properties</h2>
-        <div id="cuePropSubtitle" class="cue-prop-subtitle"></div>
+        <div class="remote-cue-properties-header">
+            <h2 id="cuePropTitle">Cue Properties</h2>
+            <div id="cuePropSubtitle" class="cue-prop-subtitle"></div>
+        </div>
+        <div class="remote-cue-properties-body">
 
         <div class="form-group">
             <label for="cuePropName">Name</label>
@@ -1368,6 +1477,7 @@
         <div class="form-group" id="cuePropFileGroup">
             <label>Audio file</label>
             <div id="cuePropFilePath" class="readonly-path"></div>
+            <div id="cuePropWaveformWrap" class="remote-prop-waveform-wrap hidden"></div>
         </div>
         <div class="form-group hidden" id="cuePropPlaylistGroup">
             <label>Playlist items</label>
@@ -1419,7 +1529,7 @@
                 <input type="color" id="cuePropColorInput" class="hidden" value="#3a3a3a">
                 <button type="button" id="cuePropColorDefault" class="btn-small">Default gray</button>
             </div>
-            <div id="cuePropColorPresets" class="cue-edit-color-swatches" style="margin-top:8px"></div>
+            <div id="cuePropColorPresets" class="cue-edit-color-swatches remote-cue-color-swatches"></div>
         </div>
 
         <div class="form-group">
@@ -1431,12 +1541,10 @@
             </select>
         </div>
 
-        <div class="form-group">
+        <div class="form-group hidden" id="cuePropTrimFields">
             <label for="cuePropTrimStart">Trim start (sec)</label>
             <input type="number" id="cuePropTrimStart" min="0" step="0.001">
-        </div>
-        <div class="form-group">
-            <label for="cuePropTrimEnd">Trim end (sec, 0 = none)</label>
+            <label for="cuePropTrimEnd" style="margin-top:8px">Trim end (sec, 0 = none)</label>
             <input type="number" id="cuePropTrimEnd" min="0" step="0.001">
         </div>
 
@@ -1453,11 +1561,13 @@
         </div>
 
         <button type="button" id="cuePropDeleteBtn" class="btn-danger">Delete cue</button>
+        </div>
     </div>
 
     <script src="retriggerCatalog.js"></script>
     <script src="remoteBadgeUtils.js"></script>
     <script src="remoteEditCardColors.js"></script>
+    <script src="remoteCuePropWaveform.js"></script>
     <script>
         // Ensure this path is correct relative to where remote.html is served from
         // If main.js serves httpServer.js from acCompaniment/src/main, and remote.html is in acCompaniment/src/renderer/remote_control
@@ -1502,6 +1612,7 @@
         const CUE_TRIGGER_LOCK_MS = 500;
         const waveformPeaksCache = new Map();
         const remoteWaveformLaneMap = new Map();
+        const remoteWaveformLanePending = new Map();
         const lastRemotePlaybackByCueId = new Map();
         const remoteCueMeterLevels = {};
         let remoteWaveformPanelEnabled = false;
@@ -1720,6 +1831,7 @@
         function closeCuePropertiesPanel() {
             activeCuePropertiesId = null;
             activeCueDetail = null;
+            window.RemoteCuePropWaveform?.destroy?.();
             remoteCuePropertiesPanel?.classList.add('hidden');
             document.querySelectorAll('.cue-edit-card.cue-edit-selected').forEach(c => c.classList.remove('cue-edit-selected'));
             if (!remoteSettingsPanel || remoteSettingsPanel.classList.contains('hidden')) {
@@ -1781,6 +1893,36 @@
             else wfSel.value = 'default';
             updateCuePropColorUI(detail.buttonColor);
             renderCuePropColorPresets(detail.buttonColor);
+
+            const trimFields = document.getElementById('cuePropTrimFields');
+            const waveformWrap = document.getElementById('cuePropWaveformWrap');
+            if (detail.type === 'playlist' || !detail.filePath) {
+                trimFields?.classList.add('hidden');
+                waveformWrap?.classList.add('hidden');
+                window.RemoteCuePropWaveform?.destroy?.();
+            } else {
+                trimFields?.classList.add('hidden');
+                window.RemoteCuePropWaveform?.mount?.(waveformWrap, detail, {
+                    onTrimChange: (trimStartTime, trimEndTime) => {
+                        if (!activeCuePropertiesId) return;
+                        const patch = { trimStartTime: trimStartTime || 0 };
+                        if (trimEndTime != null) patch.trimEndTime = trimEndTime;
+                        else patch.trimEndTime = 0;
+                        debouncedSaveCuePatch(activeCuePropertiesId, patch);
+                        if (currentCues[activeCuePropertiesId]) {
+                            currentCues[activeCuePropertiesId] = {
+                                ...currentCues[activeCuePropertiesId],
+                                trimStartTime: patch.trimStartTime,
+                                trimEndTime: trimEndTime != null ? trimEndTime : undefined,
+                            };
+                        }
+                        document.getElementById('cuePropTrimStart').value = patch.trimStartTime;
+                        document.getElementById('cuePropTrimEnd').value = trimEndTime || 0;
+                        refreshRemoteCueIndicators(currentCues[activeCuePropertiesId]);
+                        showToast('Trim saved', 'success');
+                    },
+                });
+            }
         }
 
         function updateCuePropColorUI(color) {
@@ -2485,8 +2627,28 @@
                 return;
             }
 
-            const peaksData = await loadWaveformPeaksForCue(cue);
-            if (!peaksData) return;
+            if (remoteWaveformLanePending.has(cue.id)) {
+                await remoteWaveformLanePending.get(cue.id);
+                if (remoteWaveformLaneMap.has(cue.id)) {
+                    remoteWaveformLaneMap.get(cue.id).cue = cue;
+                }
+                return;
+            }
+
+            let resolvePending;
+            const pendingPromise = new Promise((resolve) => {
+                resolvePending = resolve;
+            });
+            remoteWaveformLanePending.set(cue.id, pendingPromise);
+
+            try {
+                const peaksData = await loadWaveformPeaksForCue(cue);
+                if (!peaksData) return;
+
+                if (remoteWaveformLaneMap.has(cue.id)) {
+                    remoteWaveformLaneMap.get(cue.id).cue = cue;
+                    return;
+                }
 
             const laneEl = document.createElement('div');
             laneEl.className = 'remote-waveform-lane';
@@ -2539,6 +2701,10 @@
             syncRemoteLanesLayout();
             redrawRemoteLane(cue);
             updateRemotePanelHeader();
+            } finally {
+                remoteWaveformLanePending.delete(cue.id);
+                resolvePending?.();
+            }
         }
 
         function bindRemoteLaneSeek(lane) {
@@ -3663,7 +3829,9 @@
                             <button type="button" class="cue-move-btn cue-move-earlier" title="Move earlier in list" aria-label="Move cue earlier">◀</button>
                             <button type="button" class="cue-move-btn cue-move-later" title="Move later in list" aria-label="Move cue later">▶</button>
                         </div>
-                        <button type="button" class="cue-edit-loop-btn" aria-pressed="${cue.loop ? 'true' : 'false'}" aria-label="Toggle loop" title="Loop disabled — click to enable">${LOOP_BADGE_GLYPH}</button>
+                        <div class="cue-edit-loop-trim-group">
+                            <button type="button" class="cue-edit-loop-btn" aria-pressed="${cue.loop ? 'true' : 'false'}" aria-label="Toggle loop" title="Loop disabled — click to enable">${LOOP_BADGE_GLYPH}</button>
+                        </div>
                     </div>
                 `;
                 applyEditCardAppearance(card, cue);

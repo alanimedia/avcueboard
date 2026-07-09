@@ -48,6 +48,35 @@ function resetExpandedZoom() {
 }
 
 /**
+ * Apply zoom delta to the expanded waveform (+/- keys and wheel).
+ * @param {number} direction - 1 zoom in, -1 zoom out
+ */
+function adjustExpandedZoom(direction) {
+    if (!expandedWaveformInstance?.zoom) return;
+
+    let zoomStep;
+    if (expandedZoomLevel < 10) {
+        zoomStep = 1 * direction;
+    } else {
+        zoomStep = 5 * direction;
+    }
+
+    expandedZoomLevel += zoomStep;
+    expandedZoomLevel = Math.min(Math.max(expandedZoomLevel, minZoom), maxZoom);
+
+    try {
+        if (expandedZoomLevel <= minZoom || expandedZoomLevel === 0) {
+            expandedWaveformInstance.zoom(1);
+            expandedZoomLevel = 0;
+        } else {
+            expandedWaveformInstance.zoom(Math.max(1, expandedZoomLevel));
+        }
+    } catch (zoomError) {
+        console.error('WaveformZoom: Error applying expanded zoom:', zoomError);
+    }
+}
+
+/**
  * Set up zoom functionality for expanded waveform
  */
 function setupExpandedWaveformZoom() {
@@ -56,15 +85,9 @@ function setupExpandedWaveformZoom() {
         return;
     }
     
-    console.log('WaveformZoom: Setting up SIMPLIFIED expanded waveform zoom functionality');
+    console.log('WaveformZoom: Setting up expanded waveform zoom functionality');
     
-    // Check if event listeners are already attached to prevent duplicates
-    if (expandedWaveformDisplay.hasAttribute('data-zoom-setup')) {
-        console.log('WaveformZoom: Zoom already set up for this element');
-        return;
-    }
-    
-    // Clear any existing zoom event listeners first
+    // Always clear stale handlers (e.g. after collapse/re-expand)
     cleanupExpandedZoomHandlers();
     
     // Add zoom functionality with mouse wheel - simplified and working version
@@ -84,45 +107,8 @@ function setupExpandedWaveformZoom() {
             return;
         }
         
-        // Calculate new zoom level based on wheel direction
-        const direction = e.deltaY < 0 ? 1 : -1; // 1 = zoom in, -1 = zoom out
-        console.log('WaveformZoom: Zoom direction:', direction === 1 ? 'IN' : 'OUT');
-        
-        // Variable zoom step based on current zoom level
-        let zoomStep;
-        if (expandedZoomLevel < 10) {
-            // Smaller steps at lower zoom levels (1 unit per step)
-            zoomStep = 1 * direction;
-        } else {
-            // Larger steps at higher zoom levels (5 units per step)
-            zoomStep = 5 * direction;
-        }
-        
-        // Update the zoom level
-        const oldZoomLevel = expandedZoomLevel;
-        expandedZoomLevel += zoomStep;
-        
-        // Constrain zoom level between min and max values
-        expandedZoomLevel = Math.min(Math.max(expandedZoomLevel, minZoom), maxZoom);
-        
-        console.log(`WaveformZoom: Zoom level change: ${oldZoomLevel} -> ${expandedZoomLevel} (step: ${zoomStep})`);
-        
-        // Apply the zoom - simplified approach
-        try {
-            if (expandedZoomLevel <= minZoom || expandedZoomLevel === 0) {
-                // Reset to default zoom
-                expandedWaveformInstance.zoom(1);
-                expandedZoomLevel = 0;
-                console.log('WaveformZoom: Expanded zoom reset to default level');
-            } else {
-                // Simple zoom calculation that actually works
-                const actualZoomValue = Math.max(1, expandedZoomLevel);
-                expandedWaveformInstance.zoom(actualZoomValue);
-                console.log(`WaveformZoom: Expanded zoom applied: ${expandedZoomLevel} -> ${actualZoomValue}`);
-            }
-        } catch (zoomError) {
-            console.error('WaveformZoom: Error applying expanded zoom:', zoomError);
-        }
+        const direction = e.deltaY < 0 ? 1 : -1;
+        adjustExpandedZoom(direction);
     };
     
     const dblClickHandler = (e) => {
@@ -152,14 +138,19 @@ function setupExpandedWaveformZoom() {
     expandedWaveformDisplay._wheelHandler = wheelHandler;
     expandedWaveformDisplay._dblClickHandler = dblClickHandler;
     
-    // Add the event listeners with passive: false to allow preventDefault
     expandedWaveformDisplay.addEventListener('wheel', wheelHandler, { passive: false });
     expandedWaveformDisplay.addEventListener('dblclick', dblClickHandler);
+
+    const wrapper = expandedWaveformInstance.getWrapper?.() || expandedWaveformDisplay.querySelector('.wavesurfer');
+    if (wrapper && wrapper !== expandedWaveformDisplay) {
+        wrapper.addEventListener('wheel', wheelHandler, { passive: false });
+        wrapper.addEventListener('dblclick', dblClickHandler);
+        wrapper.setAttribute('data-zoom-setup', 'true');
+    }
     
-    // Mark as set up to prevent duplicate listeners
     expandedWaveformDisplay.setAttribute('data-zoom-setup', 'true');
     
-    console.log('WaveformZoom: Expanded zoom event listeners added to container');
+    console.log('WaveformZoom: Expanded zoom event listeners added');
 }
 
 /**
@@ -186,6 +177,12 @@ function cleanupExpandedZoomHandlers() {
         // Clean up wrapper handlers
         const wrapper = expandedWaveformDisplay.querySelector('.wavesurfer[data-zoom-setup]');
         if (wrapper) {
+            if (expandedWaveformDisplay._wheelHandler) {
+                wrapper.removeEventListener('wheel', expandedWaveformDisplay._wheelHandler);
+            }
+            if (expandedWaveformDisplay._dblClickHandler) {
+                wrapper.removeEventListener('dblclick', expandedWaveformDisplay._dblClickHandler);
+            }
             wrapper.removeAttribute('data-zoom-setup');
         }
         
@@ -294,6 +291,7 @@ export {
     initZoomModule,
     resetZoom,
     resetExpandedZoom,
+    adjustExpandedZoom,
     setupExpandedWaveformZoom,
     cleanupExpandedZoomHandlers,
     setupExpandedZoomAfterReady,

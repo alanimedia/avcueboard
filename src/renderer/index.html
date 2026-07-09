@@ -161,11 +161,12 @@
                 </div>
                 <div class="sidebar-content">
                     <input type="hidden" id="propCueId">
-                    <div class="form-group">
+                    <p id="propertiesBulkEditNote" class="properties-bulk-note hidden">Editing shared settings for all selected cues: button color, loop, retrigger, fade in, and fade out.</p>
+                    <div class="form-group properties-single-only">
                         <label for="propCueName">Name:</label>
                         <input type="text" id="propCueName" name="propCueName">
                     </div>
-                    <div class="form-group">
+                    <div class="form-group properties-single-only">
                         <label for="propCueType">Type:</label>
                         <select id="propCueType" name="propCueType">
                             <option value="single_file">Single File</option>
@@ -185,7 +186,7 @@
                             <div id="propButtonColorRecent" class="button-color-swatches button-color-recent" aria-label="Recent custom colors"></div>
                         </div>
                     </div>
-                    <div class="form-group" id="propShowButtonWaveformGroup">
+                    <div class="form-group properties-single-only" id="propShowButtonWaveformGroup">
                         <label for="propShowButtonWaveformMode">Button waveform:</label>
                         <select id="propShowButtonWaveformMode" name="propShowButtonWaveformMode">
                             <option value="default">Use app default</option>
@@ -195,9 +196,15 @@
                         <p class="small-text">Mini waveform strip at the bottom of this cue button (Electron grid and remote).</p>
                     </div>
                     
-                    <div id="propSingleFileConfig" class="form-group">
+                    <div id="propSingleFileConfig" class="form-group properties-single-only">
                         <label for="propFilePath">Audio File:</label>
-                        <input type="text" id="propFilePath" name="propFilePath" readonly placeholder="Drag & drop file">
+                        <div class="audio-file-path-block">
+                            <div id="propFilePathDisplay" class="audio-file-path-display" title="">No file selected</div>
+                            <input type="hidden" id="propFilePath" name="propFilePath" value="">
+                            <div class="audio-file-path-actions">
+                                <button type="button" id="propBrowseAudioFileBtn" class="prop-replace-audio-btn" title="Choose a different audio file">Replace…</button>
+                            </div>
+                        </div>
                         <div id="waveformDisplay" style="width: 100%; height: 128px; border: 1px solid #555; margin-top: 10px; background-color: #2c2c2c;"></div>
                         <div id="waveformControls" style="margin-top: 8px;">
                             <div class="waveform-controls-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -217,10 +224,11 @@
                         <div id="waveformTimeDisplay" style="margin-top: 10px; text-align: center; font-size: 0.9em; color: #cccccc;">
                             <span id="wfCurrentTime">0:00.000</span> / <span id="wfTotalDuration">0:00.000</span> (<span id="wfRemainingTime">-0:00.000</span>)
                         </div>
+                        <p id="wfTrimStatus" class="wf-trim-status" aria-live="polite">Drag handles or use skip buttons — trim saves automatically</p>
                     </div>
 
                     <!-- Rest of the properties sidebar content stays the same -->
-                    <div id="propPlaylistConfig" style="display: none;">
+                    <div id="propPlaylistConfig" class="properties-single-only" style="display: none;">
                         <p>Playlist Items:</p>
                         <ul id="propPlaylistItems">
                             <!-- Playlist items will be rendered here by ui.js -->
@@ -265,29 +273,29 @@
                             <div id="propRetriggerLegend" class="retrigger-legend-body"></div>
                         </details>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group properties-single-only">
                         <label for="propVolume">Volume (0-1):</label>
                         <input type="range" id="propVolume" name="propVolume" min="0" max="1" step="0.01" value="1">
                         <span id="propVolumeValue">1.00</span>
                     </div>
 
                     <!-- Ducking Controls -->
-                    <div class="form-group">
+                    <div class="form-group properties-single-only">
                         <label for="propIsDuckingTrigger">This cue triggers ducking:</label>
                         <input type="checkbox" id="propIsDuckingTrigger" name="propIsDuckingTrigger">
                     </div>
-                    <div class="form-group" id="enableDuckingGroup">
+                    <div class="form-group properties-single-only" id="enableDuckingGroup">
                         <label for="propEnableDucking">Enable ducking for this cue (be affected by triggers):</label>
                         <input type="checkbox" id="propEnableDucking" name="propEnableDucking">
                     </div>
-                    <div class="form-group" id="duckingLevelGroup" style="display: none;">
+                    <div class="form-group properties-single-only" id="duckingLevelGroup" style="display: none;">
                         <label for="propDuckingLevel">Ducking level (% of how much to lower the volume):</label>
                         <input type="range" id="propDuckingLevel" name="propDuckingLevel" min="0" max="100" step="1" value="80">
                         <span id="propDuckingLevelValue">80</span>
                     </div>
                     
 
-                    <div class="form-group">
+                    <div class="form-group properties-single-only">
                         <button id="saveCuePropertiesButton" style="display: none;">Save Cue</button>
                         <button id="deleteCuePropertiesButton">Delete Cue</button>
                     </div>
@@ -327,12 +335,14 @@
                             </button>
                         </div>
                         <div class="waveform-tips">
-                            <strong>Keyboard:</strong> 
+                            <strong>Tips:</strong>
+                            <span class="tip-item">Click waveform to expand</span>
+                            <span class="tip-separator">|</span>
+                            <span class="tip-item">Drag edge handles for in/out</span>
+                            <span class="tip-separator">|</span>
                             <span class="tip-item">← → Move (1s)</span>
                             <span class="tip-separator">|</span>
-                            <span class="tip-item">Shift+← → Fine (10ms)</span>
-                            <span class="tip-separator">|</span>
-                            <span class="tip-item">Ctrl/Cmd+← → (100ms)</span>
+                            <span class="tip-item">Shift fine (10ms)</span>
                             <span class="tip-separator">|</span>
                             <span class="tip-item">Wheel = Zoom</span>
                         </div>

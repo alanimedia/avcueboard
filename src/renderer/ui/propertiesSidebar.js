@@ -1,5 +1,6 @@
 import * as waveformControls from './waveformControls.js';
 import { debounce } from './utils.js';
+import { flashTrimBadgeForCue } from '../cueTrimBadgeUtils.js';
 
 // Import the new modular components
 import { 
@@ -7,7 +8,8 @@ import {
     getDOMElement, 
     showPropertiesSidebar, 
     hidePropertiesSidebar as hideSidebar,
-    updateDuckingControlsVisibility 
+    updateDuckingControlsVisibility,
+    syncAudioFilePathDisplay
 } from './propertiesSidebarDOM.js';
 import { 
     initPlaylistManager, 
@@ -36,6 +38,8 @@ import {
     updateRetriggerHelpText,
     renderRetriggerLegend
 } from '../retriggerBehaviorCatalog.js';
+import { pathsReferToSameAudioFile } from '../audioPathCompareUtils.js';
+import { formatWaveformTime } from './waveformControls.js';
 
 let cueStore;
 let audioController;
@@ -44,7 +48,23 @@ let uiCore; // For isEditMode, getCurrentAppConfig
 
 // --- State for Properties Sidebar ---
 let activePropertiesCueId = null;
+let activePropertiesCueIds = [];
 let debouncedSaveCueProperties;
+
+function runWithSuppressedPropertiesAutoSave(fn) {
+    window._suppressPropertiesAutoSave = true;
+    try {
+        return fn();
+    } finally {
+        queueMicrotask(() => {
+            window._suppressPropertiesAutoSave = false;
+        });
+    }
+}
+
+function cancelPendingPropertiesSave() {
+    debouncedSaveCueProperties?.cancel?.();
+}
 
 // --- Helper Functions (Specific to Properties or shared & simple enough to keep) ---
 
@@ -68,6 +88,8 @@ function initPropertiesSidebar(csModule, acModule, ipcAPI, uiCoreInterfaceRef) {
     ipcRendererBindingsModule = ipcAPI;
     uiCore = uiCoreInterfaceRef;
 
+    window.__refreshActiveCueCardAppearance = refreshActiveCueCardAppearance;
+
     // Initialize DOM elements
     cachePropertiesSidebarDOMElements();
     setupRetriggerPropertyUi();
@@ -87,7 +109,18 @@ function initPropertiesSidebar(csModule, acModule, ipcAPI, uiCoreInterfaceRef) {
     initButtonColorPicker(
         debouncedSaveCueProperties,
         () => uiCore.getCurrentAppConfig(),
-        appConfigUI.savePartialAppConfiguration
+        appConfigUI.savePartialAppConfiguration,
+        (colorState) => {
+            const cueIds = activePropertiesCueIds.length > 0
+                ? activePropertiesCueIds
+                : (activePropertiesCueId ? [activePropertiesCueId] : []);
+            const buttonColor = colorState?.useDefault ? null : colorState?.color;
+            cueIds.forEach((cueId) => {
+                if (typeof window.__refreshCueCardAppearance === 'function') {
+                    window.__refreshCueCardAppearance(cueId, buttonColor);
+                }
+            });
+        }
     );
     
     // Get DOM elements for event handlers
@@ -116,30 +149,68 @@ function initPropertiesSidebar(csModule, acModule, ipcAPI, uiCoreInterfaceRef) {
         propIsDuckingTriggerCheckbox: getDOMElement('propIsDuckingTriggerCheckbox'),
         propEnableDuckingCheckbox: getDOMElement('propEnableDuckingCheckbox'),
         propPlaylistItemsUl: getDOMElement('propPlaylistItemsUl'),
-        propPlaylistFilePathDisplay: getDOMElement('propPlaylistFilePathDisplay')
+        propPlaylistFilePathDisplay: getDOMElement('propPlaylistFilePathDisplay'),
+        propBrowseAudioFileBtn: getDOMElement('propBrowseAudioFileBtn')
     };
     
     initEventHandlers(debouncedSaveCueProperties, (cueId) => { activePropertiesCueId = cueId; }, cueStore, domElements, ipcRendererBindingsModule, audioController);
-    bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDeleteCueProperties, renderPlaylistInPropertiesWrapper, setStagedPlaylistItems);
+    bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDeleteCueProperties, renderPlaylistInPropertiesWrapper, setStagedPlaylistItems, handleBrowseAudioFile);
     
     console.log('Properties Sidebar Module Initialized');
 }
 
 
 
-// --- Properties Sidebar Specific Functions ---
-function openPropertiesSidebar(cue) {
-    const propertiesSidebar = getDOMElement('propertiesSidebar');
-    if (!cue || !propertiesSidebar || !uiCore) {
-        console.warn('[PropertiesSidebar] openPropertiesSidebar called with invalid parameters:', { cue: !!cue, propertiesSidebar: !!propertiesSidebar, uiCore: !!uiCore });
-        return;
+function updatePropertiesSidebarHeader(selectedCount) {
+    const title = document.querySelector('#propertiesSidebar .properties-sidebar-header h2');
+    if (!title) return;
+    title.textContent = selectedCount > 1
+        ? `Cue Properties (${selectedCount} selected)`
+        : 'Cue Properties';
+}
+
+function setBulkEditMode(isMultiSelect) {
+    const sidebar = getDOMElement('propertiesSidebar');
+    if (sidebar) {
+        sidebar.classList.toggle('properties-bulk-mode', isMultiSelect);
     }
-    
-    activePropertiesCueId = cue.id;
-    updateActivePropertiesCueId(cue.id);
-    
-    // Get DOM elements
-    const domElements = {
+    const bulkNote = document.getElementById('propertiesBulkEditNote');
+    if (bulkNote) {
+        bulkNote.classList.toggle('hidden', !isMultiSelect);
+    }
+
+    const nameInput = getDOMElement('propCueNameInput');
+    const typeSelect = getDOMElement('propCueTypeSelect');
+    const fileInput = getDOMElement('propFilePathInput');
+    const browseBtn = getDOMElement('propBrowseAudioFileBtn');
+    if (nameInput) {
+        nameInput.disabled = isMultiSelect;
+        nameInput.title = isMultiSelect ? 'Name can only be edited for a single selected cue' : '';
+    }
+    if (typeSelect) {
+        typeSelect.disabled = isMultiSelect;
+        typeSelect.title = isMultiSelect ? 'Type can only be edited for a single selected cue' : '';
+    }
+    if (fileInput) {
+        fileInput.disabled = isMultiSelect;
+    }
+    const pathDisplay = document.getElementById('propFilePathDisplay');
+    if (pathDisplay) {
+        pathDisplay.classList.toggle('audio-file-path-display--disabled', isMultiSelect);
+        pathDisplay.title = isMultiSelect ? 'Audio file can only be edited for a single selected cue' : (pathDisplay.textContent || '');
+    }
+    if (browseBtn) {
+        browseBtn.disabled = isMultiSelect;
+        browseBtn.title = isMultiSelect ? 'Audio file can only be edited for a single selected cue' : 'Choose a different audio file';
+    }
+}
+
+function setPerCueFieldsDisabled(isMultiSelect) {
+    setBulkEditMode(isMultiSelect);
+}
+
+function getPropertiesDomElements() {
+    return {
         propCueIdInput: getDOMElement('propCueIdInput'),
         propCueNameInput: getDOMElement('propCueNameInput'),
         propCueTypeSelect: getDOMElement('propCueTypeSelect'),
@@ -168,33 +239,141 @@ function openPropertiesSidebar(cue) {
         propDuckingLevelValueSpan: getDOMElement('propDuckingLevelValueSpan'),
         propIsDuckingTriggerCheckbox: getDOMElement('propIsDuckingTriggerCheckbox')
     };
+}
+
+function selectionIdsEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    const sortedA = [...a].sort();
+    const sortedB = [...b].sort();
+    return sortedA.every((id, index) => id === sortedB[index]);
+}
+
+function applyBulkLoopCheckboxState(cueIds) {
+    const loopCheckbox = getDOMElement('propLoopCheckbox');
+    if (!loopCheckbox || !cueStore || !Array.isArray(cueIds) || cueIds.length <= 1) {
+        if (loopCheckbox) loopCheckbox.indeterminate = false;
+        return;
+    }
+
+    const loopValues = cueIds.map((id) => !!cueStore.getCueById(id)?.loop);
+    const allSame = loopValues.every((value) => value === loopValues[0]);
+    loopCheckbox.indeterminate = !allSame;
+    if (allSame) {
+        loopCheckbox.checked = loopValues[0];
+    }
+}
+
+function refreshPropertiesSidebarInPlace(cue, cueIds) {
+    activePropertiesCueIds = [...cueIds];
+    activePropertiesCueId = cue.id;
+    updateActivePropertiesCueId(cue.id);
+    updatePropertiesSidebarHeader(cueIds.length);
+    setPerCueFieldsDisabled(cueIds.length > 1);
+    setCurrentWaveformTrim(cue.trimStartTime || 0, cue.trimEndTime);
+
+    const domElements = getPropertiesDomElements();
+    syncAudioFilePathDisplay(cue.filePath);
+    if (domElements.propTrimStartTimeInput) {
+        domElements.propTrimStartTimeInput.value = waveformControls.formatWaveformTime(cue.trimStartTime || 0);
+    }
+    if (domElements.propTrimEndTimeInput) {
+        domElements.propTrimEndTimeInput.value = (cue.trimEndTime != null)
+            ? waveformControls.formatWaveformTime(cue.trimEndTime)
+            : 'End';
+    }
+
+    waveformControls.refreshWaveformRegionsForCue?.(cue);
+    applyBulkLoopCheckboxState(cueIds);
+}
+
+function openPropertiesSidebarForSelection(cueIds, primaryCueId = null) {
+    if (!cueIds?.length || !cueStore) return;
+    const primaryId = (primaryCueId && cueIds.includes(primaryCueId))
+        ? primaryCueId
+        : cueIds[cueIds.length - 1];
+    const cue = cueStore.getCueById(primaryId);
+    if (!cue) return;
+
+    const propertiesSidebar = getDOMElement('propertiesSidebar');
+    const sidebarVisible = propertiesSidebar && !propertiesSidebar.classList.contains('hidden');
+    const previousPrimaryId = activePropertiesCueId;
+    const previousCueIds = [...activePropertiesCueIds];
+    const primaryChanged = previousPrimaryId !== primaryId;
+    const selectionChanged = !selectionIdsEqual(previousCueIds, cueIds);
+    const sameSelection = sidebarVisible && !primaryChanged && !selectionChanged;
+
+    if (sameSelection) {
+        runWithSuppressedPropertiesAutoSave(() => {
+            refreshPropertiesSidebarInPlace(cue, cueIds);
+        });
+        return;
+    }
+
+    activePropertiesCueIds = [...cueIds];
+    activePropertiesCueId = primaryId;
+    updateActivePropertiesCueId(primaryId);
+    updatePropertiesSidebarHeader(cueIds.length);
+    setPerCueFieldsDisabled(cueIds.length > 1);
 
     refreshRecentSwatches();
 
-    // Populate form with cue data using the form manager
-    populateFormWithCueData(
-        cue, 
-        domElements, 
-        setStagedPlaylistItems, 
-        renderPlaylistInPropertiesWrapper, 
-        waveformControls.showWaveformForCue, 
-        waveformControls.hideAndDestroyWaveform, 
-        updateDuckingControlsVisibility
-    );
+    runWithSuppressedPropertiesAutoSave(() => {
+        populateFormWithCueData(
+            cue,
+            getPropertiesDomElements(),
+            setStagedPlaylistItems,
+            renderPlaylistInPropertiesWrapper,
+            waveformControls.showWaveformForCue,
+            waveformControls.hideAndDestroyWaveform,
+            updateDuckingControlsVisibility
+        );
+        applyBulkLoopCheckboxState(cueIds);
+    });
 
-    // Show the sidebar
     showPropertiesSidebar();
 
-    if (uiCore?.showMainWaveformForCue && cue.type === 'single_file' && cue.filePath) {
-        uiCore.showMainWaveformForCue(cue);
+    requestAnimationFrame(() => {
+        syncAudioFilePathDisplay(cue.filePath);
+    });
+
+    if (cue.type === 'single_file' && cue.filePath) {
+        uiCore?.showMainWaveformForCue?.(cue);
+    } else {
+        uiCore?.clearMainWaveformPreview?.();
     }
+}
+
+// --- Properties Sidebar Specific Functions ---
+function openPropertiesSidebar(cue) {
+    openPropertiesSidebarForSelection([cue.id], cue.id);
 }
 
 function hidePropertiesSidebar() {
     hideSidebar();
     activePropertiesCueId = null;
+    activePropertiesCueIds = [];
+    setBulkEditMode(false);
+    updatePropertiesSidebarHeader(1);
     setStagedPlaylistItems([]);
     waveformControls.hideAndDestroyWaveform();
+    uiCore?.clearMainWaveformPreview?.();
+}
+
+function isPropertiesSidebarOpen() {
+    const propertiesSidebar = getDOMElement('propertiesSidebar');
+    return !!(propertiesSidebar && !propertiesSidebar.classList.contains('hidden'));
+}
+
+function refreshActiveCueCardAppearance() {
+    const cueIds = activePropertiesCueIds.length > 0
+        ? activePropertiesCueIds
+        : (activePropertiesCueId ? [activePropertiesCueId] : []);
+    cueIds.forEach((cueId) => {
+        const cue = cueStore?.getCueById?.(cueId);
+        if (cue && typeof window.__refreshCueCardAppearance === 'function') {
+            window.__refreshCueCardAppearance(cueId, cue.buttonColor);
+        }
+    });
 }
 
 // Wrapper function for playlist rendering
@@ -206,13 +385,19 @@ function renderPlaylistInPropertiesWrapper() {
 
 
 async function handleSaveCueProperties() {
-    console.log('[PropertiesSidebar] handleSaveCueProperties CALLED. Active Cue ID:', activePropertiesCueId);
-    if (!activePropertiesCueId) {
-        console.warn('[PropertiesSidebar] handleSaveCueProperties: No active cue ID');
+    if (window._suppressPropertiesAutoSave) {
+        console.log('[PropertiesSidebar] Skipping save — selection/form sync in progress');
+        return;
+    }
+    const cueIds = activePropertiesCueIds.length > 0
+        ? activePropertiesCueIds
+        : (activePropertiesCueId ? [activePropertiesCueId] : []);
+    console.log('[PropertiesSidebar] handleSaveCueProperties CALLED. Cue IDs:', cueIds);
+    if (!cueIds.length) {
+        console.warn('[PropertiesSidebar] handleSaveCueProperties: No active cue IDs');
         return;
     }
 
-    // Get DOM elements
     const domElements = {
         propCueNameInput: getDOMElement('propCueNameInput'),
         propCueTypeSelect: getDOMElement('propCueTypeSelect'),
@@ -231,8 +416,7 @@ async function handleSaveCueProperties() {
         propIsDuckingTriggerCheckbox: getDOMElement('propIsDuckingTriggerCheckbox')
     };
 
-    // Use the form manager to save
-    await saveCueProperties(activePropertiesCueId, domElements, getStagedPlaylistItems());
+    return await saveCueProperties(cueIds, domElements, getStagedPlaylistItems());
 }
 
 async function handleDeleteCueProperties() {
@@ -242,24 +426,153 @@ async function handleDeleteCueProperties() {
     }
 }
 
+function getActivePropertiesCueIds() {
+    return activePropertiesCueIds.length > 0
+        ? [...activePropertiesCueIds]
+        : (activePropertiesCueId ? [activePropertiesCueId] : []);
+}
+
 function getActivePropertiesCueId() {
     return activePropertiesCueId;
 }
 
-async function setFilePathInProperties(filePath) {
+function updateTrimInputsInSidebar(trimStart, trimEnd) {
+    const trimStartInput = getDOMElement('propTrimStartTimeInput');
+    const trimEndInput = getDOMElement('propTrimEndTimeInput');
+    if (trimStartInput) {
+        trimStartInput.value = formatWaveformTime(trimStart || 0);
+    }
+    if (trimEndInput) {
+        trimEndInput.value = (trimEnd !== undefined && trimEnd !== null)
+            ? formatWaveformTime(trimEnd)
+            : 'End';
+    }
+}
+
+async function assignAudioFileToActiveCue(filePath) {
     if (!activePropertiesCueId) return false;
+    if (activePropertiesCueIds.length > 1) return false;
+
     const activeCue = cueStore.getCueById(activePropertiesCueId);
     if (!activeCue || (activeCue.type !== 'single_file' && activeCue.type !== 'single')) return false;
-    
-    const propFilePathInput = getDOMElement('propFilePathInput');
-    if (propFilePathInput) {
-        propFilePathInput.value = filePath;
-        if (activeCue.type === 'single_file' || activeCue.type === 'single') {
-            waveformControls.showWaveformForCue({ ...activeCue, filePath: filePath });
+
+    if (!filePath || !String(filePath).trim()) return false;
+
+    let resolvedPath = String(filePath).trim();
+    const hasDirectory = resolvedPath.includes('/') || resolvedPath.includes('\\') || /^[a-zA-Z]:/.test(resolvedPath);
+    if (!hasDirectory && ipcRendererBindingsModule?.resolveAudioPath) {
+        try {
+            const resolveResult = await ipcRendererBindingsModule.resolveAudioPath(resolvedPath);
+            if (resolveResult?.success && resolveResult.path) {
+                resolvedPath = resolveResult.path;
+            } else {
+                alert('Could not resolve the audio file path. Choose the file using Browse or drag it from File Explorer.');
+                return false;
+            }
+        } catch (error) {
+            console.error('[PropertiesSidebar] Failed to resolve audio path:', error);
+            alert('Could not resolve the audio file path. Try Browse or drag from File Explorer.');
+            return false;
         }
-        return true;
     }
-    return false;
+
+    const oldPath = activeCue.filePath || '';
+    const sameFile = await pathsReferToSameAudioFile(
+        oldPath,
+        resolvedPath,
+        ipcRendererBindingsModule?.resolveAudioPath
+    );
+
+    let trimStart = activeCue.trimStartTime || 0;
+    let trimEnd = activeCue.trimEndTime;
+    if (!sameFile) {
+        trimStart = 0;
+        trimEnd = undefined;
+    }
+
+    setCurrentWaveformTrim(trimStart, trimEnd);
+    updateTrimInputsInSidebar(trimStart, trimEnd);
+
+    const propFilePathInput = getDOMElement('propFilePathInput');
+    if (!propFilePathInput) return false;
+
+    syncAudioFilePathDisplay(resolvedPath);
+
+    const cueForWaveform = {
+        ...activeCue,
+        filePath: resolvedPath,
+        trimStartTime: trimStart,
+        trimEndTime: trimEnd
+    };
+    waveformControls.showWaveformForCue(cueForWaveform);
+
+    cancelPendingPropertiesSave();
+    await handleSaveCueProperties();
+
+    if (!sameFile && typeof window.__refreshEditCardIndicators === 'function') {
+        window.__refreshEditCardIndicators(activePropertiesCueId);
+    }
+
+    return true;
+}
+
+async function setFilePathInProperties(filePath) {
+    return assignAudioFileToActiveCue(filePath);
+}
+
+async function handleBrowseAudioFile() {
+    if (!activePropertiesCueId || activePropertiesCueIds.length > 1) return;
+    if (!ipcRendererBindingsModule?.showOpenDialog) {
+        alert('File browser is not available.');
+        return;
+    }
+
+    const activeCue = cueStore.getCueById(activePropertiesCueId);
+    const defaultPath = activeCue?.filePath || undefined;
+
+    try {
+        const result = await ipcRendererBindingsModule.showOpenDialog({
+            title: 'Select Audio File',
+            defaultPath,
+            properties: ['openFile'],
+            filters: [
+                { name: 'Audio Files', extensions: ['wav', 'mp3', 'aac', 'm4a', 'ogg', 'flac', 'aiff', 'wma'] },
+                { name: 'All Files', extensions: ['*'] }
+            ]
+        });
+
+        if (!result || result.canceled || !result.filePaths?.length) {
+            return;
+        }
+
+        await assignAudioFileToActiveCue(result.filePaths[0]);
+    } catch (error) {
+        console.error('[PropertiesSidebar] Browse audio file failed:', error);
+        alert(`Could not open file browser: ${error.message}`);
+    }
+}
+
+function showWaveformTrimStatus(state) {
+    const el = document.getElementById('wfTrimStatus');
+    if (!el) return;
+
+    el.classList.remove('wf-trim-status--saving', 'wf-trim-status--saved');
+    if (state === 'saving') {
+        el.textContent = 'Saving trim…';
+        el.classList.add('wf-trim-status--saving');
+        return;
+    }
+    if (state === 'saved') {
+        el.textContent = 'Trim saved';
+        el.classList.add('wf-trim-status--saved');
+        clearTimeout(showWaveformTrimStatus._resetTimer);
+        showWaveformTrimStatus._resetTimer = setTimeout(() => {
+            el.classList.remove('wf-trim-status--saved');
+            el.textContent = 'Drag handles or use skip buttons — trim saves automatically';
+        }, 2500);
+        return;
+    }
+    el.textContent = 'Drag handles or use skip buttons — trim saves automatically';
 }
 
 function handleCuePropertyChangeFromWaveform(trimStart, trimEnd) {
@@ -268,21 +581,29 @@ function handleCuePropertyChangeFromWaveform(trimStart, trimEnd) {
     // Update trim values in form manager
     setCurrentWaveformTrim(trimStart, trimEnd);
     
-    // Set flag to prevent properties sidebar refresh loop
+    // Set flag to prevent properties sidebar / grid refresh loops
     window._waveformTrimUpdateInProgress = true;
+    showWaveformTrimStatus('saving');
     
-    // CRITICAL: Save immediately so playback uses fresh trim values
-    // (bypass debounce to avoid race when user hits play right after trimming)
-    handleSaveCueProperties();
-    
-    // Also schedule a debounced save as a safety net for any subsequent UI updates
-    debouncedSaveCueProperties();
-    
-    // Clear flag after giving enough time for the save and cue update cycle to complete
-    setTimeout(() => {
-        window._waveformTrimUpdateInProgress = false;
-        console.log('PropertiesSidebar: Cleared waveform trim update flag');
-    }, 1000); // Give enough time for the debounced save + IPC + cue update cycle
+    // Save immediately so playback uses fresh trim values
+    handleSaveCueProperties().then((success) => {
+        if (success !== false) {
+            showWaveformTrimStatus('saved');
+            flashTrimBadgeForCue(activePropertiesCueId);
+            if (typeof window.__refreshEditCardIndicators === 'function') {
+                window.__refreshEditCardIndicators(activePropertiesCueId);
+            }
+        } else {
+            showWaveformTrimStatus();
+        }
+    }).catch(() => {
+        showWaveformTrimStatus();
+    }).finally(() => {
+        setTimeout(() => {
+            window._waveformTrimUpdateInProgress = false;
+            console.log('PropertiesSidebar: Cleared waveform trim update flag');
+        }, 300);
+    });
 }
 
 function highlightPlayingPlaylistItemInSidebarWrapper(cueId, playlistItemId) {
@@ -319,11 +640,16 @@ function refreshPlaylistPropertiesView(cueIdToRefresh) {
 export {
     initPropertiesSidebar,
     openPropertiesSidebar,
+    openPropertiesSidebarForSelection,
     hidePropertiesSidebar,
     getActivePropertiesCueId,
+    getActivePropertiesCueIds,
+    isPropertiesSidebarOpen,
+    refreshActiveCueCardAppearance,
     refreshPlaylistPropertiesView,
     setFilePathInProperties,
     handleCuePropertyChangeFromWaveform,
     highlightPlayingPlaylistItemInSidebarWrapper as highlightPlayingPlaylistItemInSidebar,
-    handleSaveCueProperties
+    handleSaveCueProperties,
+    cancelPendingPropertiesSave
 }; 

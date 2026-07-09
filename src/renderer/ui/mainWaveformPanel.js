@@ -1,5 +1,8 @@
 // Main UI waveform panel — stacked lanes for simultaneous playback, drag-to-resize.
 
+import { loadReadOnlyTrimRegions } from './waveformRegions.js';
+import { getTrimmedDuration } from './waveformTrimTimeUtils.js';
+
 let panelEl = null;
 let displayEl = null;
 let resizeHandleEl = null;
@@ -304,7 +307,10 @@ function createLane(cue) {
             normalize: true,
             backend: 'WebAudio',
             mediaControls: false,
-            interact: true
+            interact: true,
+            plugins: [
+                WaveSurfer.Regions.create()
+            ]
         });
 
         const markLaneUserSeeking = () => {
@@ -400,10 +406,16 @@ function createLane(cue) {
             if (duration > 0 && trimStart > 0) {
                 lane.wavesurfer.seekTo(Math.min(1, trimStart / duration));
             }
+            const regionsPlugin = lane.wavesurfer.plugins?.[0];
+            if (regionsPlugin) {
+                loadReadOnlyTrimRegions(cue, lane.wavesurfer, regionsPlugin);
+            }
             if (lanes.size === 1) {
-                updateMainTimeLabels(0, duration);
+                const trimmedTotal = getTrimmedDuration(cue.trimStartTime, cue.trimEndTime, duration);
+                updateMainTimeLabels(0, trimmedTotal);
             } else if (lane.timeEl) {
-                lane.timeEl.textContent = `0:00 / ${formatTime(duration)}`;
+                const trimmedTotal = getTrimmedDuration(cue.trimStartTime, cue.trimEndTime, duration);
+                lane.timeEl.textContent = `0:00 / ${formatTime(trimmedTotal)}`;
             }
         });
 
@@ -509,13 +521,34 @@ function showForCue(cue) {
     if (!isEnabled || !panelEl || !displayEl) return;
     if (!cue || cue.type === 'playlist' || !cue.filePath) return;
 
-    if (lanes.size > 0) return;
+    // Active playback lanes take priority over edit-mode preview.
+    if (lanes.size > 0 && idlePreviewCueId === null) return;
+
+    if (idlePreviewCueId === cue.id && lanes.has(cue.id)) {
+        lanes.get(cue.id).cue = cue;
+        updatePanelHeader();
+        updateMainTimeLabels(0, cue.knownDuration || 0);
+        return;
+    }
+
+    if (idlePreviewCueId && lanes.has(idlePreviewCueId)) {
+        removeLane(idlePreviewCueId);
+    }
 
     panelEl.classList.remove('hidden');
-    clearAllLanes();
     idlePreviewCueId = cue.id;
     createLane(cue);
+    updatePanelHeader();
     updateMainTimeLabels(0, cue.knownDuration || 0);
+}
+
+function clearIdlePreview() {
+    if (idlePreviewCueId === null) return;
+    if (lanes.has(idlePreviewCueId)) {
+        removeLane(idlePreviewCueId);
+    }
+    idlePreviewCueId = null;
+    updatePanelHeader();
 }
 
 function bindResizeHandle() {
@@ -573,6 +606,7 @@ export {
     init,
     applyConfig,
     showForCue,
+    clearIdlePreview,
     handlePlaybackUpdate,
     syncPlayheadFromPlayback,
     togglePanel,

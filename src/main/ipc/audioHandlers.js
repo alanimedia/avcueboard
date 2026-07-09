@@ -1,6 +1,7 @@
 const { ipcMain } = require('electron');
 const logger = require('../utils/logger');
 const { getAudioFileDuration } = require('../utils/audioFileUtils');
+const { resolveAudioFilePath, isLikelyIncompletePath } = require('../utils/audioPathUtils');
 const { calculateEffectiveTrimmedDurationSec } = require('../../common/timeUtils');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
@@ -312,7 +313,10 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
         }
         try {
             logger.info(`IPC_HANDLER: 'add-or-update-cue' for ID: ${cueData.id || 'new cue'}`);
-            const processedCue = await cueManager.addOrUpdateProcessedCue(cueData);
+            const workspaceDir = workspaceManager?.getCurrentWorkspacePath?.()
+                || cueManager?.getWorkspaceDirectory?.()
+                || null;
+            const processedCue = await cueManager.addOrUpdateProcessedCue(cueData, workspaceDir);
             // saveCuesToFile inside addOrUpdateProcessedCue already broadcasts getWorkspaceSnapshot().
             return { success: true, cue: processedCue };
         } catch (error) {
@@ -332,15 +336,67 @@ function registerAudioHandlers(ipcMain, { cueManager, workspaceManager, mainWind
         logger.info(`IPC Handler: Received 'get-media-duration' for path: ${filePath}`);
         try {
             if (!filePath) return { success: false, error: 'No file path', duration: null };
-            
-            const duration = await getAudioFileDuration(filePath);
+
+            const workspaceDir = workspaceManager?.getCurrentWorkspacePath?.()
+                || cueManager?.getWorkspaceDirectory?.()
+                || null;
+            const resolvedPath = workspaceDir
+                ? resolveAudioFilePath(filePath, workspaceDir)
+                : filePath;
+            const duration = await getAudioFileDuration(resolvedPath, workspaceDir);
             if (duration !== null) {
-                return { success: true, duration, filePath };
+                return { success: true, duration, filePath: resolvedPath || filePath };
             }
-            return { success: false, error: 'Could not determine duration', duration: null, filePath };
+            return { success: false, error: 'Could not determine duration', duration: null, filePath: resolvedPath || filePath };
         } catch (error) {
             logger.error(`IPC Handler: Error in get-media-duration for ${filePath}:`, error);
             return { success: false, error: error.message, duration: null, filePath };
+        }
+    });
+
+    ipcMain.handle('resolve-audio-path', async (event, filePath) => {
+        try {
+            if (!filePath || typeof filePath !== 'string') {
+                return { success: false, error: 'No file path provided', path: null };
+            }
+            const workspaceDir = workspaceManager?.getCurrentWorkspacePath?.()
+                || cueManager?.getWorkspaceDirectory?.()
+                || null;
+            const resolvedPath = workspaceDir
+                ? resolveAudioFilePath(filePath, workspaceDir)
+                : filePath;
+            if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+                return {
+                    success: false,
+                    error: isLikelyIncompletePath(filePath)
+                        ? 'Audio file path is incomplete and could not be resolved in the workspace'
+                        : 'Audio file not found',
+                    path: resolvedPath || filePath
+                };
+            }
+            return { success: true, path: resolvedPath };
+        } catch (error) {
+            return { success: false, error: error.message, path: null };
+        }
+    });
+
+    ipcMain.handle('fs-check-file-exists', async (event, filePath) => {
+        try {
+            if (!filePath) {
+                return { exists: false, resolvedPath: null };
+            }
+            const workspaceDir = workspaceManager?.getCurrentWorkspacePath?.()
+                || cueManager?.getWorkspaceDirectory?.()
+                || null;
+            const resolvedPath = workspaceDir
+                ? resolveAudioFilePath(filePath, workspaceDir)
+                : filePath;
+            return {
+                exists: !!(resolvedPath && fs.existsSync(resolvedPath)),
+                resolvedPath: resolvedPath || filePath
+            };
+        } catch (error) {
+            return { exists: false, resolvedPath: filePath, error: error.message };
         }
     });
 

@@ -1,3 +1,5 @@
+import { getDroppedFilePath } from '../droppedFileUtils.js';
+
 let cueStore;
 let ipcRendererBindingsModule;
 let uiCore; // To get currentAppConfig
@@ -260,6 +262,11 @@ async function handleAddFilesAsSeparateCues() {
     console.log('Modals: Adding dropped files as separate cues.');
     try {
         for (const file of droppedFilesList) { // droppedFilesList is a FileList
+            const filePath = getDroppedFilePath(file);
+            if (!filePath) {
+                console.warn('Modals: Skipping file without path:', file.name);
+                continue;
+            }
             const cueId = await ipcRendererBindingsModule.generateUUID();
             const fileName = file.name;
             const cueName = fileName.split('.').slice(0, -1).join('.') || 'New Cue';
@@ -268,7 +275,7 @@ async function handleAddFilesAsSeparateCues() {
                 id: cueId,
                 name: cueName,
                 type: 'single_file',
-                filePath: file.path, // Electron File objects have a 'path' property
+                filePath: filePath,
                 volume: 1,
                 fadeInTime: currentAppConfig.defaultFadeInTime,
                 fadeOutTime: currentAppConfig.defaultFadeOutTime,
@@ -294,11 +301,14 @@ async function handleAddFilesAsPlaylistCue() {
         const playlistCueId = await ipcRendererBindingsModule.generateUUID();
         const defaultPlaylistName = 'New Playlist Cue'; 
 
-        const playlistItemsPromises = Array.from(droppedFilesList).map(async (file) => {
+        const playlistItemsPromises = Array.from(droppedFilesList)
+            .map((file) => ({ file, path: getDroppedFilePath(file) }))
+            .filter(({ path }) => !!path)
+            .map(async ({ file, path }) => {
             const itemId = await ipcRendererBindingsModule.generateUUID();
             return {
                 id: itemId,
-                path: file.path,
+                path: path,
                 name: file.name.split('.').slice(0, -1).join('.') || 'Playlist Item',
             };
         });

@@ -44,7 +44,7 @@ async function init(cs, ipcRendererBindingsInstance, cgAPI, sbAPI) {
     log.debug(`AudioController: init received cgAPI. Type: ${typeof cgAPI}, Is valid object: ${cgAPI && typeof cgAPI === 'object'}, Has updateCueButtonTime: ${typeof cgAPI?.updateCueButtonTime}`);
 
     // Initialize the audio playback emitter (for sending updates to main)
-    initEmitter(ipcBindings, formatTimeMMSS);
+    initEmitter(ipcBindings, formatTimeMMSS, getGlobalCueById);
     log.info('AudioController: AudioPlaybackIPCEmitter initialized.');
 
     // Dynamically import audioPlaybackManager
@@ -789,6 +789,20 @@ function getPreloadedSound(key) {
     return sound;
 }
 
+function refreshPlayingCueFromStore(cueId) {
+    if (!cueId || !playbackManagerModule?.getCurrentlyPlayingInstances) return;
+    const playing = playbackManagerModule.getCurrentlyPlayingInstances()[cueId];
+    const freshCue = getGlobalCueById(cueId);
+    if (!playing || !freshCue) return;
+    playing.cue = { ...freshCue };
+    if (playing.sound) {
+        const status = playing.sound.playing()
+            ? 'playing'
+            : (playing.isPaused ? 'paused' : 'stopped');
+        sendPlaybackTimeUpdate(cueId, playing.sound, playing, null, status);
+    }
+}
+
 export default {
     init,
     setUIRefs,
@@ -826,6 +840,7 @@ export default {
     _applyDucking: (triggerCueId) => playbackManagerModule?._applyDucking(triggerCueId),
     _revertDucking: (triggerCueIdStop) => playbackManagerModule?._revertDucking(triggerCueIdStop),
     getGlobalCueById: (cueId) => cueStoreRef?.getCueById(cueId),
+    refreshPlayingCueFromStore,
     getPreloadedSound,
     preloadAudioFiles
     // getCurrentlyPlayingPlaylistItemName, // REMOVED

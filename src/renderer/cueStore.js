@@ -80,14 +80,24 @@ function _handleCuesUpdated(updatedPayload) {
         if (sidebarsAPI && typeof sidebarsAPI.getActivePropertiesCueId === 'function' && typeof sidebarsAPI.openPropertiesSidebar === 'function') {
             if (window._waveformTrimUpdateInProgress) {
                 uiLog.debug('CueStore (_handleCuesUpdated): Skipping properties sidebar refresh - waveform trim update in progress');
-            } else {
-                const activeCueId = sidebarsAPI.getActivePropertiesCueId();
-                if (activeCueId) {
-                    const activeCue = cues.find(c => c.id === activeCueId);
-                    if (activeCue) { // No longer just for playlists, refresh for any active cue
-                        uiLog.debug(`CueStore (_handleCuesUpdated): Active cue ${activeCueId} found, re-opening/refreshing properties view.`);
-                        // Re-open properties sidebar to refresh its content with potentially updated cue data
-                        sidebarsAPI.openPropertiesSidebar(activeCue);
+            } else if (sidebarsAPI.isPropertiesSidebarOpen?.()) {
+                const gridIds = cueGridAPI?.getSelectedCueIds?.() || [];
+                const gridPrimaryId = cueGridAPI?.getPrimarySelectedCueId?.() || null;
+                if (gridIds.length > 0 && typeof sidebarsAPI.openPropertiesSidebarForSelection === 'function') {
+                    sidebarsAPI.openPropertiesSidebarForSelection(gridIds, gridPrimaryId);
+                } else {
+                    const activeCueId = sidebarsAPI.getActivePropertiesCueId();
+                    const activeCueIds = sidebarsAPI.getActivePropertiesCueIds?.() || [];
+                    if (activeCueId) {
+                        const activeCue = cues.find(c => c.id === activeCueId);
+                        if (activeCue) {
+                            uiLog.debug(`CueStore (_handleCuesUpdated): Active cue ${activeCueId} found, re-opening/refreshing properties view.`);
+                            if (activeCueIds.length > 1 && typeof sidebarsAPI.openPropertiesSidebarForSelection === 'function') {
+                                sidebarsAPI.openPropertiesSidebarForSelection(activeCueIds, activeCueId);
+                            } else {
+                                sidebarsAPI.openPropertiesSidebar(activeCue);
+                            }
+                        }
                     }
                 }
             }
@@ -96,8 +106,29 @@ function _handleCuesUpdated(updatedPayload) {
         // Check if UI is fully initialized before refreshing the grid
         // uiAPI should be uiHandles.uiModule or similar from init, cueGridAPI for the grid specifically
         if (cueGridAPI && typeof cueGridAPI.renderCues === 'function') {
-            uiLog.debug("CueStore (_handleCuesUpdated): Calling cueGridAPI.renderCues().");
-            cueGridAPI.renderCues(); // Directly call renderCues on the cueGrid module
+            if (window._waveformTrimUpdateInProgress) {
+                const activeCueId = sidebarsAPI?.getActivePropertiesCueId?.();
+                if (activeCueId && typeof cueGridAPI.applyCueBadgeState === 'function') {
+                    cueGridAPI.applyCueBadgeState(activeCueId);
+                }
+                uiLog.debug('CueStore (_handleCuesUpdated): Skipping full grid render during waveform trim update');
+            } else if (sidebarsAPI?.isPropertiesSidebarOpen?.()) {
+                const cueIds = sidebarsAPI.getActivePropertiesCueIds?.() || [];
+                const fallbackId = sidebarsAPI.getActivePropertiesCueId?.();
+                const idsToRefresh = cueIds.length > 0 ? cueIds : (fallbackId ? [fallbackId] : []);
+                idsToRefresh.forEach((id) => {
+                    if (typeof cueGridAPI.refreshCueCardAppearance === 'function') {
+                        cueGridAPI.refreshCueCardAppearance(id);
+                    }
+                    if (typeof cueGridAPI.applyCueBadgeState === 'function') {
+                        cueGridAPI.applyCueBadgeState(id);
+                    }
+                });
+                uiLog.debug('CueStore (_handleCuesUpdated): Refreshed active cue cards in place (properties open)');
+            } else {
+                uiLog.debug("CueStore (_handleCuesUpdated): Calling cueGridAPI.renderCues().");
+                cueGridAPI.renderCues();
+            }
         } else {
             uiLog.warn('CueStore (_handleCuesUpdated): cueGridAPI.renderCues is not a function.');
         }

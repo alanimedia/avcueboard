@@ -5,6 +5,8 @@
  * Handles core waveform initialization, event handling, and playback management
  */
 
+import { getTrimDisplayTimes, isWaveformRegionTarget } from './waveformTrimTimeUtils.js';
+
 // Module-level variables for WaveSurfer instance and related state
 let wavesurferInstance = null;
 let waveformIsStoppedAtTrimStart = false;
@@ -31,6 +33,8 @@ let lastExternalSyncAt = 0;
 let onSeekPlaybackCallback = null;
 let onPrepareScrubCallback = null;
 let onFinishScrubCallback = null;
+let onExpandWaveformCallback = null;
+let getTrimTimesFn = null;
 let isUserSeekingPlayback = false;
 let userSeekingClearTimeout = null;
 
@@ -61,6 +65,12 @@ function initWaveformCore(dependencies) {
     }
     if (typeof dependencies.onFinishScrub === 'function') {
         onFinishScrubCallback = dependencies.onFinishScrub;
+    }
+    if (typeof dependencies.onExpandWaveform === 'function') {
+        onExpandWaveformCallback = dependencies.onExpandWaveform;
+    }
+    if (typeof dependencies.getTrimTimes === 'function') {
+        getTrimTimesFn = dependencies.getTrimTimes;
     }
     
     console.log('WaveformCore: Initialized with dependencies:', {
@@ -94,6 +104,12 @@ function updateDependencies(dependencies) {
     if (dependencies.onTrimChange !== undefined) {
         onTrimChangeCallback = dependencies.onTrimChange;
     }
+    if (dependencies.getTrimTimes !== undefined) {
+        getTrimTimesFn = dependencies.getTrimTimes;
+    }
+    if (dependencies.onExpandWaveform !== undefined) {
+        onExpandWaveformCallback = dependencies.onExpandWaveform;
+    }
 }
 
 function markUserSeekingPlayback() {
@@ -116,6 +132,32 @@ function invokeFinishScrub(cueId) {
     }
 }
 
+function resolveTrimTimesForDisplay() {
+    const trimTimes = typeof getTrimTimesFn === 'function' ? getTrimTimesFn() : null;
+    return {
+        trimStartTime: trimTimes?.trimStartTime ?? 0,
+        trimEndTime: trimTimes?.trimEndTime,
+    };
+}
+
+function updateTimeLabelsForRawPosition(rawCurrentTime) {
+    if (!wavesurferInstance) return;
+    const fileDuration = wavesurferInstance.getDuration();
+    if (!fileDuration || fileDuration <= 0 || isNaN(fileDuration)) return;
+
+    const { trimStartTime, trimEndTime } = resolveTrimTimesForDisplay();
+    const { current, total, remaining } = getTrimDisplayTimes(
+        rawCurrentTime,
+        trimStartTime,
+        trimEndTime,
+        fileDuration
+    );
+
+    if (wfCurrentTime) wfCurrentTime.textContent = formatWaveformTime(current);
+    if (wfTotalDuration) wfTotalDuration.textContent = formatWaveformTime(total);
+    if (wfRemainingTime) wfRemainingTime.textContent = formatWaveformTime(remaining);
+}
+
 function invokeSeekPlayback(cueId, seekTimeSec, options = {}) {
     if (typeof onSeekPlaybackCallback !== 'function' || cueId == null) return;
     markUserSeekingPlayback();
@@ -126,7 +168,13 @@ function invokeSeekPlayback(cueId, seekTimeSec, options = {}) {
  * Bind event listeners for core waveform controls
  * @param {function} getTrimTimesCallback - Callback to get current trim times
  */
-function bindCoreWaveformEvents(getTrimTimesCallback) {
+function bindCoreWaveformEvents(getTrimTimesCallback, onExpandCallback) {
+    if (typeof getTrimTimesCallback === 'function') {
+        getTrimTimesFn = getTrimTimesCallback;
+    }
+    if (typeof onExpandCallback === 'function') {
+        onExpandWaveformCallback = onExpandCallback;
+    }
     console.log('WaveformCore: Starting to bind core event listeners...');
     
     if (wfPlayPauseBtn) {
@@ -457,7 +505,6 @@ function setupCoreWaveformEvents(cue, regionsPlugin, setupRegionEventsCallback, 
         if (!wavesurferInstance) return;
         const duration = wavesurferInstance.getDuration();
         const currentTime = seekProgress * duration;
-        console.log('WaveformCore: seek event - seekProgress:', seekProgress, 'currentTime:', currentTime);
         syncPlaybackTimeWithUI(currentTime);
     });
     
@@ -504,7 +551,13 @@ function setupCoreWaveformEvents(cue, regionsPlugin, setupRegionEventsCallback, 
 
     if (waveformDisplayDiv && cue?.id) {
         let activePointerId = null;
+        let pointerDownX = 0;
+        let pointerDownY = 0;
+        let pointerMoved = false;
+        const MOVE_THRESHOLD_PX = 5;
         waveformDisplayDiv.style.touchAction = 'none';
+        waveformDisplayDiv.style.cursor = 'pointer';
+        waveformDisplayDiv.title = 'Click to expand editor; drag to seek; drag edge handles for in/out';
 
         const seekAtClientX = (clientX, options = {}) => {
             if (!wavesurferInstance || !cue?.id) return;
@@ -531,8 +584,12 @@ function setupCoreWaveformEvents(cue, regionsPlugin, setupRegionEventsCallback, 
 
         waveformDisplayDiv.addEventListener('pointerdown', (event) => {
             if (activePointerId != null) return;
+            if (isWaveformRegionTarget(event.target)) return;
             event.preventDefault();
             activePointerId = event.pointerId;
+            pointerDownX = event.clientX;
+            pointerDownY = event.clientY;
+            pointerMoved = false;
             markUserSeekingPlayback();
             try {
                 waveformDisplayDiv.setPointerCapture(event.pointerId);
@@ -541,15 +598,28 @@ function setupCoreWaveformEvents(cue, regionsPlugin, setupRegionEventsCallback, 
 
         waveformDisplayDiv.addEventListener('pointermove', (event) => {
             if (event.pointerId !== activePointerId) return;
+            if (isWaveformRegionTarget(event.target)) return;
+            if (Math.abs(event.clientX - pointerDownX) > MOVE_THRESHOLD_PX
+                || Math.abs(event.clientY - pointerDownY) > MOVE_THRESHOLD_PX) {
+                pointerMoved = true;
+            }
+            if (!pointerMoved) return;
             event.preventDefault();
             seekAtClientX(event.clientX, { finalizeScrub: false, coalesceMs: 60 });
         });
 
         const finishPointer = (event) => {
             if (event.pointerId !== activePointerId) return;
-            seekAtClientX(event.clientX, { finalizeScrub: true });
+            if (!pointerMoved && !isWaveformRegionTarget(event.target)) {
+                if (typeof onExpandWaveformCallback === 'function') {
+                    onExpandWaveformCallback();
+                }
+            } else if (pointerMoved) {
+                seekAtClientX(event.clientX, { finalizeScrub: true });
+            }
             releaseUserSeekingPlayback();
             activePointerId = null;
+            pointerMoved = false;
             try {
                 waveformDisplayDiv.releasePointerCapture(event.pointerId);
             } catch (e) { /* ignore */ }
@@ -649,28 +719,13 @@ function syncPlaybackTimeWithUI(currentTime) {
         console.warn('WaveformCore: syncPlaybackTimeWithUI called but wavesurferInstance is null');
         return;
     }
-    
+
     const totalDuration = wavesurferInstance.getDuration();
     if (totalDuration === null || totalDuration === undefined || isNaN(totalDuration)) {
-        console.warn('WaveformCore: syncPlaybackTimeWithUI - invalid duration, skipping');
         return;
     }
-    
-    // Update the current time display (always show original time)
-    if (wfCurrentTime) {
-        wfCurrentTime.textContent = formatWaveformTime(currentTime);
-    }
-    
-    // Update the total duration display (always show original duration, not trimmed)
-    if (wfTotalDuration) {
-        wfTotalDuration.textContent = formatWaveformTime(totalDuration);
-    }
-    
-    // Update the remaining time display (always show original remaining time)
-    if (wfRemainingTime) {
-        const remainingTime = totalDuration - currentTime;
-        wfRemainingTime.textContent = formatWaveformTime(remainingTime);
-    }
+
+    updateTimeLabelsForRawPosition(currentTime);
 }
 
 /**
@@ -678,18 +733,10 @@ function syncPlaybackTimeWithUI(currentTime) {
  */
 function updateInitialTimeDisplays() {
     if (!wavesurferInstance) return;
-    
+
     const duration = wavesurferInstance.getDuration();
     if (duration && duration > 0) {
-        if (wfTotalDuration) {
-            wfTotalDuration.textContent = formatWaveformTime(duration);
-        }
-        if (wfRemainingTime) {
-            wfRemainingTime.textContent = formatWaveformTime(duration);
-        }
-        if (wfCurrentTime) {
-            wfCurrentTime.textContent = formatWaveformTime(0);
-        }
+        updateTimeLabelsForRawPosition(0);
     }
 }
 

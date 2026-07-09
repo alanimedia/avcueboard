@@ -17,6 +17,7 @@ let propVolumeSlider, propVolumeValueDisplay;
 let propEnableDuckingCheckbox, propDuckingLevelInput, propDuckingLevelValueSpan, propIsDuckingTriggerCheckbox;
 let propButtonColorInput, propButtonColorResetBtn;
 let propShowButtonWaveformSelect;
+let propBrowseAudioFileBtn;
 
 /**
  * Cache all DOM elements for the properties sidebar
@@ -56,6 +57,7 @@ function cachePropertiesSidebarDOMElements() {
     propButtonColorInput = document.getElementById('propButtonColor');
     propButtonColorResetBtn = document.getElementById('propButtonColorReset');
     propShowButtonWaveformSelect = document.getElementById('propShowButtonWaveformMode');
+    propBrowseAudioFileBtn = document.getElementById('propBrowseAudioFileBtn');
 
     // Set up volume slider display
     if (propVolumeSlider && propVolumeValueDisplay) {
@@ -102,7 +104,8 @@ function getDOMElement(elementName) {
         propIsDuckingTriggerCheckbox,
         propButtonColorInput,
         propButtonColorResetBtn,
-        propShowButtonWaveformSelect
+        propShowButtonWaveformSelect,
+        propBrowseAudioFileBtn
     };
     
     return elements[elementName];
@@ -138,10 +141,37 @@ function updateDuckingControlsVisibility(isTrigger) {
     }
 }
 
+/**
+ * Update the audio file path field in the properties sidebar.
+ * @param {string|null|undefined} filePath
+ */
+function syncAudioFilePathDisplay(filePath) {
+    const hiddenInput = document.getElementById('propFilePath');
+    const displayEl = document.getElementById('propFilePathDisplay');
+    const path = filePath || '';
+
+    if (hiddenInput) {
+        hiddenInput.value = path;
+    }
+
+    if (displayEl) {
+        if (path) {
+            displayEl.textContent = path;
+            displayEl.title = path;
+            displayEl.classList.remove('audio-file-path-display--empty');
+        } else {
+            displayEl.textContent = 'No file selected — drag a file or click Replace…';
+            displayEl.title = 'No file selected';
+            displayEl.classList.add('audio-file-path-display--empty');
+        }
+    }
+}
+
 export {
     cachePropertiesSidebarDOMElements,
     getDOMElement,
     showPropertiesSidebar,
     hidePropertiesSidebar,
-    updateDuckingControlsVisibility
+    updateDuckingControlsVisibility,
+    syncAudioFilePathDisplay
 };

@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 console.log("PRELOAD_DEBUG: Script start. Setting up mainProcessReadyPromise...");
 
@@ -142,7 +142,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   generateUUID: () => ipcRenderer.invoke('generate-uuid'),
 
   // File System Access Proxies
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   checkFileExists: (filePath) => ipcRenderer.invoke('fs-check-file-exists', filePath),
+  resolveAudioPath: (filePath) => ipcRenderer.invoke('resolve-audio-path', filePath),
   copyFile: (sourcePath, destPath) => ipcRenderer.invoke('fs-copy-file', sourcePath, destPath),
   deleteFile: (filePath) => ipcRenderer.invoke('fs-delete-file', filePath),
 

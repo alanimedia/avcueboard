@@ -1,6 +1,8 @@
 // Companion_soundboard/src/renderer/dragDropHandler.js
 // Manages global drag and drop functionality.
 
+import { getDroppedFilePath, getDroppedFilePaths } from './droppedFileUtils.js';
+
 let uiRef;
 let cueStoreRef; // May not be strictly needed if uiRef handles all cue data interactions
 
@@ -56,7 +58,12 @@ function handleDrop(event) {
 
     try {
         if (files.length === 1) {
-            const filePath = files[0].path || files[0].name; // Fallback to name if path not available
+            const filePath = getDroppedFilePath(files[0]);
+            if (!filePath) {
+                console.warn('DragDropHandler: Dropped file has no path (browser-only drag?)');
+                alert('Could not get the full file path for this drop. Drag the file from File Explorer, or use the cue grid drop zone.');
+                return;
+            }
             console.log('DragDropHandler: Single file dropped:', filePath, 'on target:', dropTargetElement);
             if (uiRef && typeof uiRef.handleSingleFileDrop === 'function') {
                 uiRef.handleSingleFileDrop(filePath, dropTargetElement);
@@ -64,7 +71,11 @@ function handleDrop(event) {
                 console.warn('DragDropHandler: uiRef or uiRef.handleSingleFileDrop not available.');
             }
         } else if (files.length > 1) {
-            const filePaths = Array.from(files).map(f => f.path || f.name); // Fallback to name if path not available
+            const filePaths = getDroppedFilePaths(files);
+            if (filePaths.length !== files.length) {
+                alert('Could not get full paths for all dropped files. Drag from File Explorer.');
+                return;
+            }
             console.log('DragDropHandler: Multiple files dropped:', filePaths, 'on target:', dropTargetElement);
             if (uiRef && typeof uiRef.handleMultipleFileDrop === 'function') {
                 // Pass the FileList object directly, not just paths, as we might need file names too

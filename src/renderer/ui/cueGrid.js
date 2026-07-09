@@ -16,6 +16,7 @@ import {
     createAddSectionButton,
     persistLayoutFromDom,
     bindSectionCueDragDrop,
+    updateSectionDragGap,
     bindSectionBlockDragDrop,
     getActiveDragWrappers,
     insertWrappersBefore,
@@ -155,6 +156,17 @@ function refreshEditCardColor(cueId, color) {
     syncEditCardColorSwatches(card.querySelector('.cue-edit-color-swatches'), color);
 }
 
+function refreshCueCardAppearance(cueId, color) {
+    const cue = cueStore?.getCueById?.(cueId);
+    if (!cue) return;
+    const resolvedColor = color !== undefined ? color : cue.buttonColor;
+    refreshEditCardColor(cueId, resolvedColor);
+    const button = document.getElementById(`cue-btn-${cueId}`);
+    if (button) {
+        applyCueButtonColor(button, resolvedColor);
+    }
+}
+
 function getWrapperCueId(wrapper) {
     return wrapper?.dataset?.cueId
         || wrapper?.querySelector('.cue-button')?.dataset?.cueId
@@ -224,7 +236,13 @@ function bindCueWrapperDragReorder(cueWrapper, cue) {
         const draggedWrappers = getActiveDragWrappers(cueGridContainer);
         if (draggedWrappers.length === 0 || draggedWrappers.includes(cueWrapper)) return;
 
-        updateCueDragGapAtPoint(cueWrapper.parentElement, cueWrapper, e.clientX);
+        const sectionBody = cueWrapper.closest('.cue-section-body');
+        const slotCount = getDragGapState()?.slotCount || draggedWrappers.length || 1;
+        if (sectionBody) {
+            updateSectionDragGap(sectionBody, e.clientX, e.clientY, slotCount);
+        } else {
+            updateCueDragGapAtPoint(cueWrapper.parentElement, cueWrapper, e.clientX);
+        }
     });
 
     cueWrapper.addEventListener('dragleave', (e) => {
@@ -339,12 +357,12 @@ function appendEditModeCueCard(cue, cueWrapper) {
     settingsBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         setSingleCueSelection(cue.id);
-        uiCore?.openPropertiesSidebar?.(cue);
     });
 
     bindEditCardLoopButton(card.querySelector('.cue-edit-loop-btn'), cue.id);
 
     card.addEventListener('click', (event) => handleEditCueCardSelectionClick(event, cue));
+    card.addEventListener('pointerdown', (event) => suspendWrapperDragForSelectionModifier(event, cueWrapper));
 
     cueWrapper.appendChild(card);
 }
@@ -360,11 +378,13 @@ function handleEditCueCardSelectionClick(event, cue) {
     const isMultiSelect = event.ctrlKey || event.metaKey;
     if (isMultiSelect) {
         event.preventDefault();
+        event.stopPropagation();
         toggleCueSelection(cue.id);
         return;
     }
     if (event.shiftKey) {
         event.preventDefault();
+        event.stopPropagation();
         if (selectionAnchorId) {
             selectCueRange(selectionAnchorId, cue.id);
         } else {
@@ -453,6 +473,8 @@ export function initCueGrid(cs, ac, dd, ui) {
     cacheDOMElements();
     bindEventListeners();
     isInitialized = true; // Set initialization flag
+    window.__refreshCueCardAppearance = refreshCueCardAppearance;
+    window.__refreshEditCardIndicators = refreshEditCardIndicators;
     uiLog.info('CueGrid: Initialized successfully.');
     // Do not call renderCues() here; let ui.loadAndRenderCues in renderer.js handle the first render.
 }
@@ -490,12 +512,63 @@ function applySelectionToDom() {
         wrapper.classList.toggle('cue-selected', isSelected);
     });
     updateDeleteSelectedButton();
+    syncPropertiesSidebarToSelection();
+}
+
+function suspendWrapperDragForSelectionModifier(event, cueWrapper) {
+    if (!uiCore?.isPersistedEditMode?.()) return;
+    if (!(event.shiftKey || event.ctrlKey || event.metaKey)) return;
+    cueWrapper.draggable = false;
+    const restore = () => {
+        if (uiCore?.isPersistedEditMode?.()) {
+            cueWrapper.draggable = true;
+        }
+    };
+    window.addEventListener('pointerup', restore, { once: true });
+    window.addEventListener('mouseup', restore, { once: true });
+}
+
+function syncPropertiesSidebarToSelection() {
+    if (!uiCore?.isPersistedEditMode?.()) return;
+    uiCore?.cancelPendingPropertiesSave?.();
+    const ids = [...selectedCueIds];
+    if (ids.length === 0) {
+        uiCore?.hidePropertiesSidebar?.();
+        uiCore?.clearMainWaveformPreview?.();
+        return;
+    }
+
+    const primaryId = getPrimarySelectedCueId();
+    if (window._waveformTrimUpdateInProgress && typeof uiCore?.getActivePropertiesCueIds === 'function') {
+        const activeIds = uiCore.getActivePropertiesCueIds();
+        const activePrimary = uiCore.getActivePropertiesCueId?.();
+        const samePrimary = activePrimary === primaryId;
+        const sameIds = activeIds.length === ids.length
+            && ids.every((id) => activeIds.includes(id));
+        if (samePrimary && sameIds) return;
+    }
+
+    if (typeof uiCore?.openPropertiesSidebarForSelection === 'function') {
+        uiCore.openPropertiesSidebarForSelection(ids, primaryId);
+    }
+}
+
+function getSelectedCueIds() {
+    return [...selectedCueIds];
+}
+
+function getPrimarySelectedCueId() {
+    if (selectionAnchorId && selectedCueIds.has(selectionAnchorId)) {
+        return selectionAnchorId;
+    }
+    return [...selectedCueIds][0] || null;
 }
 
 export function clearCueSelection() {
     selectedCueIds.clear();
     selectionAnchorId = null;
     applySelectionToDom();
+    uiCore?.clearMainWaveformPreview?.();
 }
 
 function getVisibleCueOrder() {
@@ -1499,5 +1572,8 @@ export {
     updateCueMeterLevel,
     resetCueMeter,
     applyCueBadgeState,
-    refreshAllCueBadges
+    refreshAllCueBadges,
+    getSelectedCueIds,
+    getPrimarySelectedCueId,
+    refreshCueCardAppearance
 };

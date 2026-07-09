@@ -19,6 +19,7 @@ import {
 let debouncedSaveCueProperties = null;
 let getCurrentAppConfig = null;
 let saveAppConfiguration = null;
+let onButtonColorPreview = null;
 
 let buttonColorUseDefault = true;
 let selectedColor = DEFAULT_CUE_BUTTON_COLOR;
@@ -167,6 +168,12 @@ async function selectColor(color, { source = 'custom', useDefault = false } = {}
     updateCustomInput();
     updateSwatchSelection();
 
+    if (typeof onButtonColorPreview === 'function') {
+        onButtonColorPreview(getButtonColorFormState());
+    } else if (typeof window.__refreshActiveCueCardAppearance === 'function') {
+        window.__refreshActiveCueCardAppearance();
+    }
+
     if (debouncedSaveCueProperties) {
         debouncedSaveCueProperties();
     }
@@ -206,10 +213,11 @@ function bindEvents() {
     }
 }
 
-export function initButtonColorPicker(saveCallback, appConfigGetter, appConfigSaver) {
+export function initButtonColorPicker(saveCallback, appConfigGetter, appConfigSaver, colorPreviewCallback = null) {
     debouncedSaveCueProperties = saveCallback;
     getCurrentAppConfig = appConfigGetter;
     saveAppConfiguration = appConfigSaver;
+    onButtonColorPreview = colorPreviewCallback;
 
     previewEl = document.getElementById('propButtonColorPreview');
     customInputEl = document.getElementById('propButtonColor');

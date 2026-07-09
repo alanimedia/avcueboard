@@ -148,7 +148,23 @@ h1 {
     padding: 5px;
     border-radius: var(--border-radius);
     border: 1px solid var(--border-color);
-} 
+}
+
+.audio-file-path-input {
+    font-size: 0.85em;
+    overflow-x: auto;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    cursor: text;
+}
+
+.audio-file-path-block {
+    width: 100%;
+}
+
+.prop-replace-audio-btn {
+    flex-shrink: 0;
+}
 
 /* Remote Links Container */
 .remote-links-container {

@@ -4,9 +4,105 @@
     border: 1px solid var(--button-secondary-border);
     margin-top: 10px; 
     background-color: var(--background-darker);
-    box-sizing: border-box; /* Add this to include border in width calculation */
-    overflow: hidden; /* Prevent content from overflowing */
-    position: relative; /* Ensure proper positioning context */
+    box-sizing: border-box;
+    overflow: hidden;
+    position: relative;
+    cursor: pointer;
+}
+
+.trim-marker-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 20;
+    overflow: visible;
+}
+
+#waveformDisplay [part~="region-handle"],
+#expandedWaveformDisplay [part~="region-handle"],
+.main-waveform-lane-body [part~="region-handle"] {
+    width: 22px !important;
+    min-width: 22px !important;
+    background: linear-gradient(
+        to right,
+        rgba(251, 191, 36, 0.15) 0%,
+        rgba(251, 191, 36, 0.55) 45%,
+        rgba(251, 191, 36, 0.55) 55%,
+        rgba(251, 191, 36, 0.15) 100%
+    ) !important;
+    border-left: 1px solid rgba(251, 191, 36, 0.85) !important;
+    border-right: 1px solid rgba(251, 191, 36, 0.85) !important;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.45) !important;
+    cursor: ew-resize !important;
+    z-index: 9 !important;
+    opacity: 0.92;
+}
+
+.trim-grab-affordance {
+    position: absolute;
+    top: 10%;
+    bottom: 10%;
+    width: 5px;
+    transform: translateX(-50%);
+    border-radius: 3px;
+    background: rgba(251, 191, 36, 0.35);
+    border: 1px solid rgba(251, 191, 36, 0.75);
+    pointer-events: none;
+    z-index: 7;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.45);
+}
+
+#expandedWaveformDisplay .trim-grab-affordance {
+    width: 7px;
+    background: rgba(251, 191, 36, 0.45);
+}
+
+.trim-bracket-marker {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 21;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 1.6rem;
+    font-weight: 400;
+    line-height: 1;
+    color: rgba(251, 191, 36, 0.7);
+    text-shadow: 0 0 8px rgba(0, 0, 0, 1), 0 0 3px #000, 0 1px 0 #000;
+}
+
+.trim-bracket-marker.trim-bracket-bold {
+    font-weight: 900;
+    font-size: 1.75rem;
+    color: #fcd34d;
+}
+
+.trim-bracket-marker-in {
+    padding-right: 2px;
+}
+
+.trim-bracket-marker-out {
+    padding-left: 2px;
+}
+
+#waveformDisplay [part~="region"]:not([part~="region-handle"]) {
+    border-top: 1px solid rgba(34, 197, 94, 0.55);
+    border-bottom: 1px solid rgba(34, 197, 94, 0.55);
+}
+
+#expandedWaveformDisplay [part~="region"]:not([part~="region-handle"]) {
+    border-top: 1px solid rgba(34, 197, 94, 0.65);
+    border-bottom: 1px solid rgba(34, 197, 94, 0.65);
+}
+
+.main-waveform-lane-body [part~="region"]:not([part~="region-handle"]) {
+    border-top: 1px solid rgba(34, 197, 94, 0.75);
+    border-bottom: 1px solid rgba(34, 197, 94, 0.75);
+    pointer-events: none;
 }
 
 #waveformControls {
@@ -276,4 +372,21 @@
     #expandedWaveformDisplay {
         height: 300px; /* Slightly smaller on mobile to fit screen */
     }
-} 
+}
+
+.wf-trim-status {
+    margin: 8px 0 0;
+    text-align: center;
+    font-size: 0.78em;
+    color: #9ca3af;
+    line-height: 1.35;
+}
+
+.wf-trim-status--saving {
+    color: #93c5fd;
+}
+
+.wf-trim-status--saved {
+    color: #86efac;
+    font-weight: 600;
+}

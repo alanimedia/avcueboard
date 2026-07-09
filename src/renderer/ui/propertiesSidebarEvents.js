@@ -42,8 +42,9 @@ function initEventHandlers(saveCallback, setActiveCueId, csModule, elements, ipc
  * @param {Function} handleDeleteCueProperties - Function to handle cue deletion
  * @param {Function} renderPlaylistInProperties - Function to render playlist
  * @param {Function} setStagedPlaylistItems - Function to set staged playlist items
+ * @param {Function} handleBrowseAudioFile - Function to open file browser for audio
  */
-function bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDeleteCueProperties, renderPlaylistInProperties, setStagedPlaylistItems) {
+function bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDeleteCueProperties, renderPlaylistInProperties, setStagedPlaylistItems, handleBrowseAudioFile) {
     console.log('[PropertiesSidebarEventListeners] BINDING LISTENERS START');
     console.log('  propCueNameInput (at bind start):', domElements.propCueNameInput ? 'Exists' : 'NULL');
     console.log('  debouncedSaveCueProperties (at bind start):', typeof debouncedSaveCueProperties);
@@ -56,6 +57,12 @@ function bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDelete
     }
     if (domElements.deleteCuePropertiesButton) {
         domElements.deleteCuePropertiesButton.addEventListener('click', handleDeleteCueProperties);
+    }
+
+    if (domElements.propBrowseAudioFileBtn && typeof handleBrowseAudioFile === 'function') {
+        domElements.propBrowseAudioFileBtn.addEventListener('click', () => {
+            handleBrowseAudioFile();
+        });
     }
 
     // Cue type change handler
@@ -110,8 +117,7 @@ function bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDelete
 
     // Auto-save inputs
     const inputsToAutoSave = [
-        domElements.propCueNameInput, 
-        domElements.propFilePathInput, 
+        domElements.propCueNameInput,
         domElements.propFadeInTimeInput, 
         domElements.propFadeOutTimeInput,
         domElements.propVolumeRangeInput, 
@@ -142,6 +148,9 @@ function bindPropertiesSidebarEventListeners(hidePropertiesSidebar, handleDelete
     checkboxesToAutoSave.forEach(checkbox => {
         if (checkbox) {
             checkbox.addEventListener('change', () => {
+                if (checkbox === domElements.propLoopCheckbox) {
+                    checkbox.indeterminate = false;
+                }
                 console.log(`[PropertiesSidebarEventListeners] CHANGE event on CHECKBOX: ${checkbox.id || 'anonymous checkbox'}. Checked: ${checkbox.checked}`);
                 debouncedSaveCueProperties();
             });

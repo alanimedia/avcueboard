@@ -7,6 +7,7 @@ import * as WaveformRegions from './waveformRegions.js';
 import * as WaveformTrimControls from './waveformTrimControls.js';
 import * as WaveformBottomPanel from './waveformBottomPanel.js';
 import * as WaveformExpanded from './waveformExpanded.js';
+import { getTrimDisplayTimes } from './waveformTrimTimeUtils.js';
 
 // Dependencies from other modules (will be set in init)
 let ipcRendererBindingsModule;
@@ -147,7 +148,10 @@ function initializeModules() {
     WaveformTrimControls.bindTrimControlEvents();
     
     // Bind core waveform events
-    WaveformCore.bindCoreWaveformEvents(() => WaveformRegions.getCurrentTrimTimes());
+    WaveformCore.bindCoreWaveformEvents(
+        () => WaveformRegions.getCurrentTrimTimes(),
+        () => expandBottomPanel()
+    );
     
     // Expose expandBottomPanel and collapseBottomPanel functions to global scope for bottom panel access
     window.waveformControlsExpandBottomPanel = expandBottomPanel;
@@ -205,6 +209,30 @@ function showWaveformForCue(cue) {
  */
 function hideAndDestroyWaveform() {
     WaveformCore.hideAndDestroyWaveform();
+}
+
+/**
+ * Reload trim regions on the existing properties waveform without tearing it down.
+ * @param {object} cue - Cue with trim fields
+ */
+function refreshWaveformRegionsForCue(cue) {
+    const wavesurferInstance = WaveformCore.getWavesurferInstance();
+    const currentFilePath = WaveformCore.getCurrentAudioFilePath();
+    if (!wavesurferInstance || !cue?.filePath || cue.filePath !== currentFilePath) {
+        return;
+    }
+
+    const reloadRegions = () => {
+        WaveformRegions.loadRegionsFromCue(cue, wavesurferInstance);
+    };
+
+    const duration = wavesurferInstance.getDuration?.();
+    if (duration && duration > 0) {
+        reloadRegions();
+        return;
+    }
+
+    wavesurferInstance.once('ready', reloadRegions);
 }
 
 /**
@@ -405,18 +433,31 @@ function setupExpandedWaveformControls(wavesurferInstance) {
     const expandedWfTotalDuration = document.getElementById('expandedWfTotalDuration');
     const expandedWfRemainingTime = document.getElementById('expandedWfRemainingTime');
     
+    const refreshExpandedTimeLabels = (rawCurrentTime) => {
+        const fileDuration = wavesurferInstance.getDuration();
+        const trimTimes = WaveformRegions.getCurrentTrimTimes() || { trimStartTime: 0, trimEndTime: undefined };
+        updateExpandedTimeDisplays(
+            expandedWfCurrentTime,
+            expandedWfTotalDuration,
+            expandedWfRemainingTime,
+            rawCurrentTime,
+            fileDuration,
+            trimTimes.trimStartTime,
+            trimTimes.trimEndTime
+        );
+    };
+
     // Update time displays
     wavesurferInstance.on('audioprocess', (currentTime) => {
-        updateExpandedTimeDisplays(expandedWfCurrentTime, expandedWfTotalDuration, expandedWfRemainingTime, currentTime, wavesurferInstance.getDuration());
+        refreshExpandedTimeLabels(currentTime);
     });
     
     wavesurferInstance.on('seek', (seekProgress) => {
-        const currentTime = seekProgress * wavesurferInstance.getDuration();
-        updateExpandedTimeDisplays(expandedWfCurrentTime, expandedWfTotalDuration, expandedWfRemainingTime, currentTime, wavesurferInstance.getDuration());
+        refreshExpandedTimeLabels(seekProgress * wavesurferInstance.getDuration());
     });
     
     wavesurferInstance.on('timeupdate', (currentTime) => {
-        updateExpandedTimeDisplays(expandedWfCurrentTime, expandedWfTotalDuration, expandedWfRemainingTime, currentTime, wavesurferInstance.getDuration());
+        refreshExpandedTimeLabels(currentTime);
     });
     
     // Play/Pause button
@@ -463,15 +504,20 @@ function setupExpandedWaveformControls(wavesurferInstance) {
  * @param {number} currentTime - Current playback time
  * @param {number} duration - Total duration
  */
-function updateExpandedTimeDisplays(currentTimeEl, totalDurationEl, remainingTimeEl, currentTime, duration) {
+function updateExpandedTimeDisplays(currentTimeEl, totalDurationEl, remainingTimeEl, rawCurrentTime, fileDuration, trimStartTime, trimEndTime) {
+    const { current, total, remaining } = getTrimDisplayTimes(
+        rawCurrentTime,
+        trimStartTime,
+        trimEndTime,
+        fileDuration
+    );
     if (currentTimeEl) {
-        currentTimeEl.textContent = WaveformCore.formatWaveformTime(currentTime);
+        currentTimeEl.textContent = WaveformCore.formatWaveformTime(current);
     }
     if (totalDurationEl) {
-        totalDurationEl.textContent = WaveformCore.formatWaveformTime(duration);
+        totalDurationEl.textContent = WaveformCore.formatWaveformTime(total);
     }
     if (remainingTimeEl) {
-        const remaining = duration - currentTime;
         remainingTimeEl.textContent = WaveformCore.formatWaveformTime(remaining);
     }
 }
@@ -723,6 +769,7 @@ function expandBottomPanel() {
                     
                     // Set up zoom for expanded waveform
                     WaveformZoom.setupExpandedWaveformZoom();
+                    WaveformZoom.setupExpandedZoomAfterReady();
                 }
             },
             // Setup regions callback
@@ -896,6 +943,7 @@ export {
     initWaveformControls as init, // Export initWaveformControls as init
     showWaveformForCue,
     hideAndDestroyWaveform,
+    refreshWaveformRegionsForCue,
     getCurrentTrimTimes,
     formatWaveformTime,
     syncPlayheadFromPlayback,

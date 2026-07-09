@@ -5,6 +5,7 @@
 
 import { formatWaveformTime } from './waveformControls.js';
 import { getDragAfterElement } from './propertiesSidebarUtils.js';
+import { getDroppedFilePath } from '../droppedFileUtils.js';
 
 // --- State for Playlist Management ---
 let stagedPlaylistItems = [];
@@ -185,7 +186,8 @@ async function handleDropPlaylistItem(event, propPlaylistItemsUl, propPlaylistFi
             for (const file of audioFiles) {
                 const newItemId = await ipcRendererBindingsModule.generateUUID();
                 const itemName = file.name;
-                const itemPath = file.path;
+                const itemPath = getDroppedFilePath(file);
+                if (!itemPath) continue;
                 let itemDuration = 0;
                 try {
                     const durationResult = await ipcRendererBindingsModule.getMediaDuration(itemPath);

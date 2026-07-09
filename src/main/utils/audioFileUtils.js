@@ -1,5 +1,7 @@
 const fs = require('fs');
+const path = require('path');
 const logger = require('./logger');
+const { resolveAudioFilePath } = require('./audioPathUtils');
 
 /**
  * parses the audio file to get its duration.
@@ -7,7 +9,7 @@ const logger = require('./logger');
  * @param {string} filePath 
  * @returns {Promise<number|null>} Duration in seconds or null on failure
  */
-async function getAudioFileDuration(filePath) {
+async function getAudioFileDuration(filePath, workspaceDir = null) {
     let mm;
     try {
         mm = await import('music-metadata'); // Dynamic import
@@ -21,10 +23,16 @@ async function getAudioFileDuration(filePath) {
             logger.warn('audioFileUtils (getAudioFileDuration): filePath is null or undefined.');
             return null;
         }
-        if (!fs.existsSync(filePath)) {
-            logger.warn(`audioFileUtils (getAudioFileDuration): File not found at ${filePath}`);
+
+        const resolvedPath = workspaceDir
+            ? resolveAudioFilePath(filePath, workspaceDir)
+            : (fs.existsSync(filePath) ? path.normalize(filePath) : filePath);
+
+        if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+            logger.warn(`audioFileUtils (getAudioFileDuration): File not found at ${filePath}${resolvedPath && resolvedPath !== filePath ? ` (resolved: ${resolvedPath})` : ''}`);
             return null;
         }
+        filePath = resolvedPath;
 
         // Check file size to avoid processing very large files
         const stats = fs.statSync(filePath);

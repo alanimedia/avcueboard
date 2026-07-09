@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.7.0
+
+### Added
+- Workspace-aware audio path resolution so cues with basename-only paths play correctly after Electron 31+ path restrictions
+- **Replace…** browse button in cue properties to pick audio files via native dialog (preserves cue settings; trim resets only when the file path changes)
+- Visible filename display for the assigned audio file path in properties
+- Bulk-edit fields in properties when multiple cues are selected
+- Trim badge braces on edit cards and web remote (grey when inactive)
+- `remoteCuePropWaveform.js` module for remote properties waveform handling
+- `audioPathCompareUtils`, `droppedFileUtils`, and `cueTrimBadgeUtils` helpers
+
+### Changed
+- Edit-mode cue drag-reorder uses grid-aware insertion with stable gap placeholders (smoother mid-section drops and a larger end-of-section drop zone)
+- Edit-card color swatch updates apply immediately without full grid rebuild
+- Web remote properties sidebar scroll and horizontal color swatch layout
+- Web remote trim handles on cue property waveforms
+
+### Fixed
+- Newly dropped or assigned audio files failing to play when only the filename was stored
+- `show-open-dialog` IPC handler missing from modular IPC setup
+- Audio file path field collapsed or invisible in properties until focused
+- Bottom main waveform panel staying on the first selected cue until play/stop
+- Duplicate waveform lanes on web remote from concurrent lane creation
+- File drag-drop from OS using `webUtils.getPathForFile` instead of unreliable `.name` fallback
+- Cue paths normalized on workspace load/save via `audioPathUtils`
+
 ## 1.6.0
 
 ### Added

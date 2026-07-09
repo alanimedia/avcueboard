@@ -31,19 +31,38 @@ export function clearDragGapPlaceholders(state = activeDragGapState) {
     state.placeholders = [];
 }
 
+function isSameDropIntent(current, next) {
+    if (!current || !next || current.parent !== next.parent) return false;
+    if (current.insertionIndex !== undefined && next.insertionIndex !== undefined) {
+        return current.insertionIndex === next.insertionIndex;
+    }
+    return current.refNode === next.refNode && current.insertBefore === next.insertBefore;
+}
+
 export function updateDragGapAt(state, {
     parent,
     refNode = null,
     insertBefore = true,
     slotCount = 1,
+    insertionIndex,
     className = 'cue-drag-gap-placeholder'
 } = {}) {
     if (!state || !parent) return;
-    clearDragGapPlaceholders(state);
-
-    state.dropIntent = { parent, refNode, insertBefore };
 
     const count = Math.max(1, slotCount);
+    const nextIntent = {
+        parent,
+        refNode,
+        insertBefore,
+        ...(insertionIndex !== undefined ? { insertionIndex } : {})
+    };
+
+    if (isSameDropIntent(state.dropIntent, nextIntent) && state.placeholders.length === count) {
+        return;
+    }
+
+    clearDragGapPlaceholders(state);
+    state.dropIntent = nextIntent;
     for (let i = 0; i < count; i += 1) {
         const placeholder = document.createElement('div');
         placeholder.className = className;

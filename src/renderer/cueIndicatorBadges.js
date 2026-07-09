@@ -1,7 +1,23 @@
 import { getRetriggerBadgePresentation } from './retriggerBehaviorCatalog.js';
 import { resolveEffectiveRetriggerBehavior } from './retriggerBehaviorUtils.js';
+import { updateTrimBadgeEl } from './cueTrimBadgeUtils.js';
 
 export const LOOP_BADGE_GLYPH = '∞';
+
+function ensureTrimBadgeInStrip(strip, loopBadge) {
+    let trimBadge = strip.querySelector('.cue-trim-badge');
+    if (!trimBadge) {
+        trimBadge = document.createElement('span');
+        trimBadge.className = 'cue-trim-badge';
+        trimBadge.setAttribute('aria-hidden', 'true');
+        if (loopBadge?.parentElement === strip) {
+            loopBadge.insertAdjacentElement('afterend', trimBadge);
+        } else {
+            strip.appendChild(trimBadge);
+        }
+    }
+    return trimBadge;
+}
 
 export function ensureCueIndicatorStrip(hostEl) {
     if (!hostEl) return null;
@@ -20,13 +36,18 @@ export function ensureCueIndicatorStrip(hostEl) {
 
         strip.appendChild(retriggerIcon);
         strip.appendChild(loopBadge);
+        ensureTrimBadgeInStrip(strip, loopBadge);
         hostEl.insertBefore(strip, hostEl.firstChild);
     }
+
+    const loopBadge = strip.querySelector('.cue-loop-badge');
+    const trimBadge = ensureTrimBadgeInStrip(strip, loopBadge);
 
     return {
         strip,
         retriggerIcon: strip.querySelector('.cue-retrigger-icon'),
-        loopBadge: strip.querySelector('.cue-loop-badge')
+        loopBadge,
+        trimBadge,
     };
 }
 
@@ -63,5 +84,9 @@ export function updateCueIndicatorStrip(hostEl, cue, appConfig = {}) {
         refs.loopBadge.classList.toggle('visible', !!cue.loop);
     }
 
+    updateTrimBadgeEl(refs.trimBadge, cue);
+
     return refs;
 }
+
+export { updateTrimBadgeEl } from './cueTrimBadgeUtils.js';

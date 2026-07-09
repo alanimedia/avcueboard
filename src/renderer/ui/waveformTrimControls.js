@@ -5,6 +5,8 @@
  * Handles trim start/end setting and clearing functionality
  */
 
+import { trimTimesForPersist } from './waveformTrimTimeUtils.js';
+
 // Dependencies
 let wavesurferInstance = null;
 let wsRegions = null;
@@ -115,9 +117,11 @@ function handleSetTrimStart() {
             id: 'trimRegion',
             start: currentTime,
             end: trimEnd,
-            color: 'rgba(0, 255, 0, 0.3)', // Green for what we keep
-            drag: true,
-            resize: true
+            color: 'rgba(34, 197, 94, 0.28)',
+            drag: false,
+            resize: true,
+            resizeStart: true,
+            resizeEnd: true,
         });
         
         // Create cut overlay for the beginning (what will be cut)
@@ -136,7 +140,8 @@ function handleSetTrimStart() {
         
         // Notify callback
         if (typeof onTrimChangeCallback === 'function') {
-            onTrimChangeCallback(currentTime, trimEnd);
+            const { trimStartTime, trimEndTime } = trimTimesForPersist(currentTime, trimEnd, duration);
+            onTrimChangeCallback(trimStartTime, trimEndTime);
         }
         
     } catch (error) {
@@ -206,9 +211,11 @@ function handleSetTrimEnd() {
             id: 'trimRegion',
             start: trimStart,
             end: currentTime,
-            color: 'rgba(0, 255, 0, 0.3)', // Green for what we keep
-            drag: true,
-            resize: true
+            color: 'rgba(34, 197, 94, 0.28)',
+            drag: false,
+            resize: true,
+            resizeStart: true,
+            resizeEnd: true,
         });
         
         // Create cut overlay for the end (what will be cut)
@@ -227,7 +234,8 @@ function handleSetTrimEnd() {
         
         // Notify callback
         if (typeof onTrimChangeCallback === 'function') {
-            onTrimChangeCallback(trimStart, currentTime);
+            const { trimStartTime, trimEndTime } = trimTimesForPersist(trimStart, currentTime, duration);
+            onTrimChangeCallback(trimStartTime, trimEndTime);
         }
         
     } catch (error) {
@@ -365,9 +373,23 @@ function handleClearTrim() {
             }
         }, 100);
         
-        // Notify callback with null values to indicate full duration (no trim)
+        // Notify callback with cleared trim
         if (typeof onTrimChangeCallback === 'function') {
-            onTrimChangeCallback(null, null);
+            onTrimChangeCallback(0, undefined);
+        }
+
+        const duration = currentWavesurfer?.getDuration?.() || 0;
+        if (duration > 0 && currentRegions) {
+            currentRegions.addRegion({
+                id: 'trimRegion',
+                start: 0,
+                end: duration,
+                color: 'rgba(34, 197, 94, 0.12)',
+                drag: false,
+                resize: true,
+                resizeStart: true,
+                resizeEnd: true,
+            });
         }
         
         console.log('WaveformTrimControls: Trim cleared successfully - both in and out points removed');

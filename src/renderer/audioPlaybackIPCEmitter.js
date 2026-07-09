@@ -1,14 +1,19 @@
+import { calculateEffectiveTrimmedDurationSec } from './audioTimeUtils.js';
+
 let ipcBindings = null;
 let formatTimeMMSS = null;
+let getCueByIdRef = null;
 
 /**
  * Initializes the emitter with necessary dependencies.
  * @param {object} ipcRendererBindingsInstance - The IPC bindings instance.
  * @param {function} formatTimeMMSSFunc - The time formatting function.
+ * @param {function} getCueByIdFunc - Returns latest cue from cue store.
  */
-function init(ipcRendererBindingsInstance, formatTimeMMSSFunc) {
+function init(ipcRendererBindingsInstance, formatTimeMMSSFunc, getCueByIdFunc) {
     ipcBindings = ipcRendererBindingsInstance;
     formatTimeMMSS = formatTimeMMSSFunc;
+    getCueByIdRef = typeof getCueByIdFunc === 'function' ? getCueByIdFunc : null;
     console.log('AudioPlaybackIPCEmitter initialized.');
 }
 
@@ -46,7 +51,7 @@ function sendPlaybackTimeUpdate(cueId, soundInstance, playingState, currentItemN
         return;
     }
 
-    const cue = playingState.cue;
+    const cue = (getCueByIdRef ? getCueByIdRef(cueId) : null) || playingState.cue;
     let currentTimeSec = 0;
 
     // CAPTURE INITIAL VALUES & ADD LOGGING
@@ -103,32 +108,21 @@ function sendPlaybackTimeUpdate(cueId, soundInstance, playingState, currentItemN
     // This specific block is now handled above with logging, but the original logic's intent is preserved.
 
     if (!playingState.isPlaylist) {
-        // For logging, capture the duration before trimming is applied
         const preTrimTotalDurationSec = totalDurationSec;
-        let itemEffectiveDuration = -1; // For logging if complex trim is applied
+        const sourceDurationForTrimCalc = (initialCueKnownDuration > 0 ? initialCueKnownDuration : preTrimTotalDurationSec);
+        const trimmedTotal = calculateEffectiveTrimmedDurationSec({
+            ...cue,
+            knownDuration: sourceDurationForTrimCalc,
+        });
+        totalDurationSec = Math.max(0, trimmedTotal);
 
-        if (cue.trimStartTime && cue.trimStartTime > 0) {
-            // For stopped cues, don't adjust currentTimeSec based on seek position
-            if (status !== 'stopped') {
-                const originalSeek = soundInstance ? soundInstance.seek() : currentTimeSec;
-                currentTimeSec = Math.max(0, originalSeek - cue.trimStartTime);
-            }
-            
-            // Use initialCueKnownDuration if available, otherwise preTrimTotalDurationSec (which might itself be from knownDuration or playingState.duration)
-            let sourceDurationForTrimCalc = (initialCueKnownDuration > 0 ? initialCueKnownDuration : preTrimTotalDurationSec);
-            itemEffectiveDuration = sourceDurationForTrimCalc - cue.trimStartTime;
-
-            if (cue.trimEndTime && cue.trimEndTime > cue.trimStartTime) {
-                itemEffectiveDuration = Math.min(itemEffectiveDuration, cue.trimEndTime - cue.trimStartTime);
-            }
-            totalDurationSec = Math.max(0, itemEffectiveDuration);
-            console.log(`[CUE_DURATION_DEBUG ${cueId}] Post-trim (start/end) totalDurationSec: ${totalDurationSec}. (Source for trim: ${sourceDurationForTrimCalc}, trimStart: ${cue.trimStartTime}, trimEnd: ${cue.trimEndTime}, calculated effectiveItemDur: ${itemEffectiveDuration})`);
-
-        } else if (cue.trimEndTime && cue.trimEndTime > 0 && cue.trimEndTime < (initialCueKnownDuration > 0 ? initialCueKnownDuration : preTrimTotalDurationSec)) {
-            // Use initialCueKnownDuration if available, otherwise preTrimTotalDurationSec
-            let sourceDurationForTrimCalc = (initialCueKnownDuration > 0 ? initialCueKnownDuration : preTrimTotalDurationSec);
-            totalDurationSec = Math.min(sourceDurationForTrimCalc, cue.trimEndTime);
-            console.log(`[CUE_DURATION_DEBUG ${cueId}] Post-trim (end only) totalDurationSec: ${totalDurationSec}. (Source for trim: ${sourceDurationForTrimCalc}, trimEnd: ${cue.trimEndTime})`);
+        const trimStart = cue.trimStartTime || 0;
+        if (status !== 'stopped' && (soundInstance || status === 'paused' || status === 'paused_seek')) {
+            const rawSeek = soundInstance ? (soundInstance.seek() || 0) : (playingState.lastSeekPosition ?? 0);
+            currentTimeSec = Math.max(0, rawSeek - trimStart);
+            currentTimeSec = Math.min(currentTimeSec, totalDurationSec);
+        } else if (status === 'stopped') {
+            currentTimeSec = 0;
         }
     }
     // Ensure totalDuration is not negative after adjustments

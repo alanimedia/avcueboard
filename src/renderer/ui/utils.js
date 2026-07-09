@@ -29,12 +29,17 @@ function getGlobalCueById(cueId) {
 // Debounce function
 function debounce(func, delay) {
     let timeoutId;
-    return function(...args) {
+    const debounced = function(...args) {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
             func.apply(this, args);
         }, delay);
     };
+    debounced.cancel = () => {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+    };
+    return debounced;
 }
 
 export {

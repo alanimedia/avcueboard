@@ -523,6 +523,29 @@ body.main-waveform-resizing {
     overflow: hidden;
 }
 
+#propertiesSidebar.properties-bulk-mode .properties-single-only {
+    display: none !important;
+}
+
+#propertiesSidebar.properties-bulk-mode .retrigger-legend {
+    display: none !important;
+}
+
+.properties-bulk-note {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #bfdbfe;
+    font-size: 0.82em;
+    line-height: 1.35;
+}
+
+.properties-bulk-note.hidden {
+    display: none;
+}
+
 #propertiesSidebar .sidebar-content {
     flex: 1 1 auto;
     min-height: 0;

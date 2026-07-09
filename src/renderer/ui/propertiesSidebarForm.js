@@ -4,6 +4,7 @@
  */
 
 import { formatWaveformTime } from './waveformControls.js';
+import { syncAudioFilePathDisplay } from './propertiesSidebarDOM.js';
 import {
     normalizeTrimValues,
     validateCueName,
@@ -16,7 +17,7 @@ import {
     retriggerSelectValueToOverride
 } from '../retriggerBehaviorUtils.js';
 import { updateRetriggerHelpText } from '../retriggerBehaviorCatalog.js';
-import { applyCueBadgeState } from './cueGrid.js';
+import { applyCueBadgeState, updateCueButtonTime } from './cueGrid.js';
 import {
     setButtonColorFromCue,
     getButtonColorFormState,
@@ -149,38 +150,85 @@ function collectFormData(activePropertiesCueId, domElements, stagedPlaylistItems
 }
 
 /**
- * Save cue properties
- * @param {string} activePropertiesCueId - Currently active cue ID
+ * Save cue properties for one or more cues.
+ * @param {string|string[]} activePropertiesCueIds - Cue ID or list of cue IDs
  * @param {Object} domElements - DOM elements object
  * @param {Array} stagedPlaylistItems - Current staged playlist items
  * @returns {Promise<boolean>} Success status
  */
-async function saveCueProperties(activePropertiesCueId, domElements, stagedPlaylistItems) {
-    console.log('[PropertiesSidebar] saveCueProperties CALLED. Active Cue ID:', activePropertiesCueId);
-    if (!activePropertiesCueId) {
-        console.warn('[PropertiesSidebar] saveCueProperties: No active cue ID');
+async function saveCueProperties(activePropertiesCueIds, domElements, stagedPlaylistItems) {
+    const cueIds = Array.isArray(activePropertiesCueIds)
+        ? activePropertiesCueIds
+        : [activePropertiesCueIds];
+    console.log('[PropertiesSidebar] saveCueProperties CALLED. Cue IDs:', cueIds);
+    if (!cueIds.length) {
+        console.warn('[PropertiesSidebar] saveCueProperties: No active cue IDs');
         return false;
     }
 
-    const formData = collectFormData(activePropertiesCueId, domElements, stagedPlaylistItems);
-    if (!formData) {
+    const isMultiSelect = cueIds.length > 1;
+    const templateData = collectFormData(cueIds[0], domElements, stagedPlaylistItems);
+    if (!templateData) {
         return false;
     }
 
     try {
-        const result = await cueStore.addOrUpdateCue(formData);
-        if (!result || !result.success) {
-            console.error('PropertiesSidebar: Failed to save cue:', result ? result.error : 'Unknown error');
-            return false;
-        } else {
-            console.log('[PropertiesSidebar] Successfully saved cue:', activePropertiesCueId);
-            if (typeof applyCueBadgeState === 'function') {
-                applyCueBadgeState(activePropertiesCueId);
+        let allSucceeded = true;
+        for (const cueId of cueIds) {
+            const existingCue = cueStore.getCueById(cueId);
+            if (!existingCue) {
+                allSucceeded = false;
+                continue;
             }
-            return true;
+
+            const formData = { ...templateData, id: cueId };
+            if (isMultiSelect) {
+                formData.name = existingCue.name;
+                formData.type = existingCue.type;
+                formData.filePath = existingCue.filePath;
+                formData.playlistItems = existingCue.playlistItems;
+                formData.trimStartTime = existingCue.trimStartTime;
+                formData.trimEndTime = existingCue.trimEndTime;
+                formData.shuffle = existingCue.shuffle;
+                formData.repeatOne = existingCue.repeatOne;
+                formData.playlistPlayMode = existingCue.playlistPlayMode;
+                formData.volume = existingCue.volume;
+                formData.enableDucking = existingCue.enableDucking;
+                formData.duckingLevel = existingCue.duckingLevel;
+                formData.isDuckingTrigger = existingCue.isDuckingTrigger;
+                formData.showButtonWaveform = existingCue.showButtonWaveform;
+            }
+
+            const result = await cueStore.addOrUpdateCue(formData);
+            if (!result || !result.success) {
+                console.error('PropertiesSidebar: Failed to save cue:', cueId, result ? result.error : 'Unknown error');
+                allSucceeded = false;
+                continue;
+            }
+
+            if (typeof applyCueBadgeState === 'function') {
+                applyCueBadgeState(cueId);
+            }
+            if (typeof updateCueButtonTime === 'function') {
+                updateCueButtonTime(cueId);
+            }
+            if (audioController?.default?.refreshPlayingCueFromStore) {
+                audioController.default.refreshPlayingCueFromStore(cueId);
+            } else if (audioController?.refreshPlayingCueFromStore) {
+                audioController.refreshPlayingCueFromStore(cueId);
+            }
         }
+
+        if (allSucceeded && typeof window.__refreshActiveCueCardAppearance === 'function') {
+            window.__refreshActiveCueCardAppearance();
+        }
+        if (allSucceeded && typeof window.__refreshEditCardIndicators === 'function') {
+            cueIds.forEach((cueId) => window.__refreshEditCardIndicators(cueId));
+        }
+
+        return allSucceeded;
     } catch (error) {
-        console.error('PropertiesSidebar: Error saving cue:', error);
+        console.error('PropertiesSidebar: Error saving cue(s):', error);
         return false;
     }
 }
@@ -253,7 +301,7 @@ function populateFormWithCueData(cue, domElements, setStagedPlaylistItems, rende
         if(domElements.propRepeatOnePlaylistItemCheckbox) domElements.propRepeatOnePlaylistItemCheckbox.checked = cue.repeatOne || false;
         if(domElements.propPlaylistPlayModeSelect) domElements.propPlaylistPlayModeSelect.value = cue.playlistPlayMode || 'continue';
     } else {
-        if(domElements.propFilePathInput) domElements.propFilePathInput.value = cue.filePath || '';
+        syncAudioFilePathDisplay(cue.filePath);
         if(domElements.propPlaylistItemsUl) domElements.propPlaylistItemsUl.innerHTML = '';
         setStagedPlaylistItems([]);
         currentWaveformTrimStart = cue.trimStartTime || 0;
@@ -271,7 +319,10 @@ function populateFormWithCueData(cue, domElements, setStagedPlaylistItems, rende
     if(domElements.propFadeOutTimeInput) domElements.propFadeOutTimeInput.value = fadeOutTime;
     
     // Set loop with fallback
-    if(domElements.propLoopCheckbox) domElements.propLoopCheckbox.checked = cue.loop !== undefined ? cue.loop : (appConfig.defaultLoopSingleCue || false);
+    if (domElements.propLoopCheckbox) {
+        domElements.propLoopCheckbox.indeterminate = false;
+        domElements.propLoopCheckbox.checked = cue.loop !== undefined ? cue.loop : (appConfig.defaultLoopSingleCue || false);
+    }
     
     // Set volume with validation (0-1 range)
     const volume = validateVolume(cue.volume !== undefined ? cue.volume : appConfig.defaultVolume);

@@ -203,7 +203,18 @@ async function getMediaDuration(filePath) {
         throw new Error("electronAPIInstance not available for get-media-duration");
     }
     console.log(`IPC Binding: Requesting media duration for path: ${filePath}`);
-    return electronAPIInstance.invoke('get-media-duration', filePath);
+    const result = await electronAPIInstance.invoke('get-media-duration', filePath);
+    if (result && typeof result === 'object' && result.success) {
+        return result.duration;
+    }
+    return result;
+}
+
+async function resolveAudioPath(filePath) {
+    if (!electronAPIInstance) {
+        throw new Error("electronAPIInstance not available for resolve-audio-path");
+    }
+    return electronAPIInstance.invoke('resolve-audio-path', filePath);
 }
 
 // --- Listeners for Main Process Events ---
@@ -441,6 +452,7 @@ export {
     getAudioFileBuffer,
     getOrGenerateWaveformPeaks,
     getMediaDuration,
+    resolveAudioPath,
     setAudioOutputDevice,
     showMultipleFilesDropModalComplete,
     showOpenDialog,

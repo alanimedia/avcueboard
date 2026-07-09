@@ -25,6 +25,59 @@
         return appConfig.defaultRetriggerBehavior || 'restart';
     }
 
+    function getTrimBadgeSides(trimStartTime, trimEndTime, fileDuration = 0) {
+        const duration = Math.max(0, fileDuration || 0);
+        const start = Math.max(0, trimStartTime || 0);
+        const end = trimEndTime;
+        const hasIn = start > 0.01;
+        let hasOut = false;
+        if (end != null && end > start + 0.01) {
+            hasOut = duration > 0.01 ? end < duration - 0.01 : true;
+        }
+        return { visible: hasIn || hasOut, hasIn, hasOut };
+    }
+
+    function getTrimBadgeSidesFromCue(cue) {
+        const duration = cue?.knownDuration || cue?.totalDuration || 0;
+        return getTrimBadgeSides(cue?.trimStartTime, cue?.trimEndTime, duration);
+    }
+
+    function renderTrimBadgeMarkup(hasIn, hasOut) {
+        const openClass = hasIn ? 'trim-brace trim-brace-in trim-brace-active' : 'trim-brace trim-brace-in';
+        const closeClass = hasOut ? 'trim-brace trim-brace-out trim-brace-active' : 'trim-brace trim-brace-out';
+        return `<span class="${openClass}">{</span><span class="trim-brace-gap">&nbsp;&nbsp;</span><span class="${closeClass}">}</span>`;
+    }
+
+    function updateTrimBadgeEl(el, cue) {
+        if (!el || !cue) return;
+        const { visible, hasIn, hasOut } = getTrimBadgeSidesFromCue(cue);
+        el.classList.toggle('visible', visible);
+        if (!visible) {
+            el.innerHTML = '';
+            el.removeAttribute('title');
+            return;
+        }
+        el.innerHTML = renderTrimBadgeMarkup(hasIn, hasOut);
+        if (hasIn && hasOut) el.title = 'Trimmed in and out';
+        else if (hasIn) el.title = 'Trimmed in';
+        else el.title = 'Trimmed out';
+    }
+
+    function ensureTrimBadgeInStrip(strip, loopBadge) {
+        let trimBadge = strip.querySelector('.cue-trim-badge');
+        if (!trimBadge) {
+            trimBadge = document.createElement('span');
+            trimBadge.className = 'cue-trim-badge';
+            trimBadge.setAttribute('aria-hidden', 'true');
+            if (loopBadge?.parentElement === strip) {
+                loopBadge.insertAdjacentElement('afterend', trimBadge);
+            } else {
+                strip.appendChild(trimBadge);
+            }
+        }
+        return trimBadge;
+    }
+
     function ensureCueIndicatorStrip(hostEl) {
         if (!hostEl) return null;
         let strip = hostEl.querySelector(':scope > .cue-indicator-strip');
@@ -42,13 +95,18 @@
 
             strip.appendChild(retriggerIcon);
             strip.appendChild(loopBadge);
+            ensureTrimBadgeInStrip(strip, loopBadge);
             hostEl.insertBefore(strip, hostEl.firstChild);
         }
+
+        const loopBadge = strip.querySelector('.cue-loop-badge');
+        const trimBadge = ensureTrimBadgeInStrip(strip, loopBadge);
 
         return {
             strip,
             retriggerIcon: strip.querySelector('.cue-retrigger-icon'),
-            loopBadge: strip.querySelector('.cue-loop-badge')
+            loopBadge,
+            trimBadge,
         };
     }
 
@@ -85,6 +143,8 @@
             refs.loopBadge.classList.toggle('visible', !!cue.loop);
         }
 
+        updateTrimBadgeEl(refs.trimBadge, cue);
+
         return refs;
     }
 
@@ -92,6 +152,7 @@
         LOOP_BADGE_GLYPH,
         ensureCueIndicatorStrip,
         updateCueIndicatorStrip,
+        updateTrimBadgeEl,
         getRetriggerBadgePresentation,
         resolveEffectiveRetriggerBehavior
     };

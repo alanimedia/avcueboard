@@ -167,42 +167,54 @@ export function getSectionIdFromDropTarget(element) {
     return body.dataset.sectionId || body.closest('.cue-section-block')?.dataset.sectionId || null;
 }
 
-function findInsertPositionInSection(sectionBody, clientX, clientY) {
-    const wrappers = [...sectionBody.querySelectorAll(':scope > .cue-wrapper:not(.dragging-cue-group)')];
-    if (wrappers.length === 0) {
-        return { append: true };
+const GRID_ROW_TOLERANCE_PX = 10;
+const SECTION_APPEND_ZONE_PX = 16;
+
+function getSectionCueWrappers(sectionBody) {
+    return [...sectionBody.querySelectorAll(':scope > .cue-wrapper:not(.dragging-cue-group)')];
+}
+
+function sortWrappersByGridPosition(wrappers) {
+    return [...wrappers].sort((a, b) => {
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        if (Math.abs(ra.top - rb.top) > GRID_ROW_TOLERANCE_PX) {
+            return ra.top - rb.top;
+        }
+        return ra.left - rb.left;
+    });
+}
+
+function pointerBeforeWrapper(clientX, clientY, rect) {
+    if (clientY < rect.top + GRID_ROW_TOLERANCE_PX) return true;
+    if (clientY > rect.bottom - GRID_ROW_TOLERANCE_PX) return false;
+    return clientX < rect.left + rect.width / 2;
+}
+
+/** Grid-aware insertion index (0..n) for cue reorder within a section body. */
+export function findInsertionIndexInSection(sectionBody, clientX, clientY) {
+    const sorted = sortWrappersByGridPosition(getSectionCueWrappers(sectionBody));
+    if (sorted.length === 0) return 0;
+
+    const maxBottom = Math.max(...sorted.map((wrapper) => wrapper.getBoundingClientRect().bottom));
+    if (clientY > maxBottom + SECTION_APPEND_ZONE_PX) {
+        return sorted.length;
     }
 
-    for (const wrapper of wrappers) {
-        const rect = wrapper.getBoundingClientRect();
-        if (clientX >= rect.left && clientX <= rect.right
-            && clientY >= rect.top && clientY <= rect.bottom) {
-            const midpoint = rect.left + rect.width / 2;
-            return clientX < midpoint ? { before: wrapper } : { after: wrapper };
+    const lastWrapper = sorted[sorted.length - 1];
+    const lastRect = lastWrapper.getBoundingClientRect();
+    if (clientY >= lastRect.top + lastRect.height * 0.25 && clientX >= lastRect.right - 36) {
+        return sorted.length;
+    }
+
+    for (let i = 0; i < sorted.length; i += 1) {
+        const rect = sorted[i].getBoundingClientRect();
+        if (pointerBeforeWrapper(clientX, clientY, rect)) {
+            return i;
         }
     }
 
-    let closest = null;
-    let closestDist = Infinity;
-    for (const wrapper of wrappers) {
-        const rect = wrapper.getBoundingClientRect();
-        const centerY = rect.top + rect.height / 2;
-        const dist = Math.abs(clientY - centerY);
-        if (dist < closestDist) {
-            closestDist = dist;
-            closest = wrapper;
-        }
-    }
-
-    if (closest) {
-        const rect = closest.getBoundingClientRect();
-        if (clientY < rect.top) return { before: closest };
-        if (clientY > rect.bottom) return { after: closest };
-        const midpoint = rect.left + rect.width / 2;
-        return clientX < midpoint ? { before: closest } : { after: closest };
-    }
-
-    return { append: true };
+    return sorted.length;
 }
 
 export function sortWrappersDocumentOrder(wrappers) {
@@ -283,55 +295,47 @@ export function appendWrappersToSection(sectionBody, wrappers) {
     ordered.forEach(wrapper => sectionBody.appendChild(wrapper));
 }
 
-function updateSectionDragGap(sectionBody, clientX, clientY, slotCount) {
+export function updateSectionDragGap(sectionBody, clientX, clientY, slotCount) {
     if (!sectionBody) return;
     const state = getDragGapState();
     if (!state) return;
 
-    const position = findInsertPositionInSection(sectionBody, clientX, clientY);
-    if (position.before) {
+    const sorted = sortWrappersByGridPosition(getSectionCueWrappers(sectionBody));
+    const insertionIndex = findInsertionIndexInSection(sectionBody, clientX, clientY);
+
+    if (insertionIndex >= sorted.length) {
         updateDragGapAt(state, {
             parent: sectionBody,
-            refNode: position.before,
-            insertBefore: true,
-            slotCount
+            refNode: null,
+            slotCount,
+            insertionIndex
         });
         return;
     }
-    if (position.after) {
-        updateDragGapAt(state, {
-            parent: sectionBody,
-            refNode: position.after,
-            insertBefore: false,
-            slotCount
-        });
-        return;
-    }
+
     updateDragGapAt(state, {
         parent: sectionBody,
-        refNode: null,
-        slotCount
+        refNode: sorted[insertionIndex],
+        insertBefore: true,
+        slotCount,
+        insertionIndex
     });
 }
 
 export function moveCueWrappersInSection(sectionBody, wrappers, clientX, clientY) {
     if (!sectionBody || !wrappers?.length) return;
 
+    const sorted = sortWrappersByGridPosition(getSectionCueWrappers(sectionBody));
+    const insertionIndex = findInsertionIndexInSection(sectionBody, clientX, clientY);
     const ordered = sortWrappersDocumentOrder(wrappers);
     removeWrappersFromDom(ordered);
-    const position = findInsertPositionInSection(sectionBody, clientX, clientY);
 
-    if (position.before) {
-        insertWrappersBefore(sectionBody, ordered, position.before);
+    if (insertionIndex >= sorted.length) {
+        appendWrappersToSection(sectionBody, ordered);
         return;
     }
 
-    if (position.after) {
-        insertWrappersAfter(sectionBody, ordered, position.after);
-        return;
-    }
-
-    appendWrappersToSection(sectionBody, ordered);
+    insertWrappersBefore(sectionBody, ordered, sorted[insertionIndex]);
 }
 
 export function moveCueWrapperInSection(sectionBody, draggedWrapper, clientX, clientY) {
@@ -452,7 +456,9 @@ export function bindSectionCueDragDrop(container, {
         event.preventDefault();
         event.stopPropagation();
         event.dataTransfer.dropEffect = 'move';
-        clearSectionDragOver();
+        container.querySelectorAll('.cue-section-body.cue-section-drag-over').forEach((el) => {
+            if (el !== sectionBody) el.classList.remove('cue-section-drag-over');
+        });
         sectionBody.classList.add('cue-section-drag-over');
         updateSectionDragGap(sectionBody, event.clientX, event.clientY, draggedWrappers.length);
     });

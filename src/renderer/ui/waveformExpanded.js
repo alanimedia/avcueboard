@@ -5,6 +5,10 @@
  * Handles the expanded waveform functionality in the bottom panel
  */
 
+import { getTrimDisplayTimes, trimTimesForPersist } from './waveformTrimTimeUtils.js';
+import { styleRegions, syncTrimBracketMarkers } from './waveformRegions.js';
+import * as WaveformZoom from './waveformZoom.js';
+
 // Expanded waveform state
 let expandedWaveformCanvas = null;
 let expandedWaveformInstance = null; // Expanded waveform WaveSurfer instance
@@ -920,22 +924,25 @@ function syncRegionsFromMain() {
             mainRegions.forEach(region => {
                 if (region && region.id === 'trimRegion') {
                     try {
-                        expandedRegions.addRegion({
+                        const copiedRegion = expandedRegions.addRegion({
                             id: 'trimRegion',
                             start: region.start,
                             end: region.end,
-                            color: 'rgba(0, 255, 0, 0.3)',
-                            drag: true,
-                            resize: true
+                            color: 'rgba(34, 197, 94, 0.28)',
+                            drag: false,
+                            resize: true,
+                            resizeStart: true,
+                            resizeEnd: true,
                         });
-                        console.log('WaveformExpanded: Copied trim region to expanded waveform');
-                        
-                        // Set up region event handlers for expanded waveform
-                        const expandedRegion = expandedRegions.getRegions().find(r => r.id === 'trimRegion');
-                        if (expandedRegion) {
-                            expandedRegion.on('update-end', () => {
-                                // Sync region changes back to main waveform
-                                syncRegionToMain(expandedRegion);
+
+                        if (copiedRegion) {
+                            copiedRegion.on('update', () => {
+                                styleRegions(expandedWaveformInstance, expandedRegions);
+                                syncTrimBracketMarkers(expandedWaveformInstance, expandedRegions);
+                                updateExpandedTimeDisplay();
+                            });
+                            copiedRegion.on('update-end', () => {
+                                syncRegionToMain(copiedRegion);
                             });
                         }
                     } catch (error) {
@@ -948,7 +955,8 @@ function syncRegionsFromMain() {
         // Also sync any cut overlay regions
         if (Array.isArray(mainRegions)) {
             mainRegions.forEach(region => {
-                if (region && (region.id === 'cutOverlay-start' || region.id === 'cutOverlay-end')) {
+                if (region && (region.id === 'cutOverlay-before' || region.id === 'cutOverlay-after'
+                    || region.id === 'cutOverlay-start' || region.id === 'cutOverlay-end')) {
                     try {
                         expandedRegions.addRegion({
                             id: region.id,
@@ -982,13 +990,37 @@ function syncRegionToMain(expandedRegion) {
         const mainRegion = mainRegions.find(r => r && r.id === 'trimRegion');
         
         if (mainRegion) {
-            // Update main region to match expanded region
             mainRegion.update({
                 start: expandedRegion.start,
                 end: expandedRegion.end
             });
-            console.log('WaveformExpanded: Synced region changes to main waveform');
         }
+
+        const fileDuration = expandedWaveformInstance?.getDuration?.()
+            || wavesurferInstance?.getDuration?.()
+            || 0;
+        if (fileDuration > 0) {
+            if (wavesurferInstance) {
+                styleRegions(wavesurferInstance, wsRegions);
+            }
+            if (expandedWaveformInstance) {
+                const expandedRegions = expandedWaveformInstance.plugins?.[0];
+                if (expandedRegions) {
+                    styleRegions(expandedWaveformInstance, expandedRegions);
+                    syncTrimBracketMarkers(expandedWaveformInstance, expandedRegions);
+                }
+            }
+            if (typeof onTrimChangeCallback === 'function') {
+                const { trimStartTime, trimEndTime } = trimTimesForPersist(
+                    expandedRegion.start,
+                    expandedRegion.end,
+                    fileDuration
+                );
+                onTrimChangeCallback(trimStartTime, trimEndTime);
+            }
+        }
+
+        updateExpandedTimeDisplay();
     } catch (error) {
         console.warn('WaveformExpanded: Error syncing region to main:', error);
     }
@@ -1092,37 +1124,53 @@ function syncPlayheadFromPlayback(payload) {
     updateExternalExpandedTimeLabels(currentTimeSec, totalDurationSec);
 }
 
+function getExpandedTrimTimes() {
+    if (!expandedWaveformInstance) {
+        return { trimStartTime: 0, trimEndTime: undefined };
+    }
+    const duration = expandedWaveformInstance.getDuration();
+    const regions = expandedWaveformInstance.plugins?.[0]?.getRegions?.();
+    const trimRegion = Array.isArray(regions)
+        ? regions.find((region) => region?.id === 'trimRegion')
+        : null;
+    if (!trimRegion || !duration) {
+        return { trimStartTime: 0, trimEndTime: undefined };
+    }
+    return trimTimesForPersist(trimRegion.start, trimRegion.end, duration);
+}
+
 /**
  * Update the expanded waveform time display
  */
 function updateExpandedTimeDisplay() {
     if (!expandedWaveformInstance) {
-        // Don't log warning - this is expected before waveform is created
         return;
     }
-    
+
     try {
-        const currentTime = expandedWaveformInstance.getCurrentTime();
-        const duration = expandedWaveformInstance.getDuration();
-        
-        // Only update if we have valid duration (waveform is loaded)
-        if (isNaN(currentTime) || isNaN(duration) || duration <= 0) {
-            // This is expected during initialization - don't log warning
+        const rawCurrentTime = expandedWaveformInstance.getCurrentTime();
+        const fileDuration = expandedWaveformInstance.getDuration();
+
+        if (isNaN(rawCurrentTime) || isNaN(fileDuration) || fileDuration <= 0) {
             return;
         }
-        
-        const remainingTime = duration - currentTime;
-        
-        console.log('WaveformExpanded: Updating time display:', { currentTime, duration, remainingTime });
-        
+
+        const { trimStartTime, trimEndTime } = getExpandedTrimTimes();
+        const { current, total, remaining } = getTrimDisplayTimes(
+            rawCurrentTime,
+            trimStartTime,
+            trimEndTime,
+            fileDuration
+        );
+
         if (expandedWfCurrentTime) {
-            expandedWfCurrentTime.textContent = formatWaveformTime(currentTime);
+            expandedWfCurrentTime.textContent = formatWaveformTime(current);
         }
         if (expandedWfTotalDuration) {
-            expandedWfTotalDuration.textContent = formatWaveformTime(duration);
+            expandedWfTotalDuration.textContent = formatWaveformTime(total);
         }
         if (expandedWfRemainingTime) {
-            expandedWfRemainingTime.textContent = formatWaveformTime(remainingTime);
+            expandedWfRemainingTime.textContent = formatWaveformTime(remaining);
         }
     } catch (error) {
         console.error('WaveformExpanded: Error updating time display:', error);
@@ -1208,6 +1256,16 @@ function setupExpandedKeyboardControls() {
                 e.preventDefault();
                 console.log('WaveformExpanded: Jumped to end');
                 return;
+            case '+':
+            case '=':
+                e.preventDefault();
+                WaveformZoom.adjustExpandedZoom(1);
+                return;
+            case '-':
+            case '_':
+                e.preventDefault();
+                WaveformZoom.adjustExpandedZoom(-1);
+                return;
             default:
                 handled = false;
         }
@@ -1232,9 +1290,9 @@ function setupExpandedKeyboardControls() {
     
     // Also add to document for when expanded waveform has focus
     const documentKeyHandler = (e) => {
-        // Check if expanded waveform is visible
         const bottomPanel = document.getElementById('bottomWaveformPanel');
         if (bottomPanel && !bottomPanel.classList.contains('collapsed')) {
+            if (e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
             keydownHandler(e);
         }
     };
@@ -1373,6 +1431,9 @@ function cleanupExpandedWaveform() {
         document.removeEventListener('keydown', document._expandedKeydownHandler);
         delete document._expandedKeydownHandler;
     }
+
+    WaveformZoom.cleanupExpandedZoomHandlers();
+    WaveformZoom.resetExpandedZoom();
     
     // Remove event listeners from main waveform to prevent memory leaks
     if (wavesurferInstance && expandedWaveformInstance) {

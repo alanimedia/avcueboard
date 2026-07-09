@@ -417,6 +417,7 @@ function initialize(cueMgr, mainWin, appConfig = null, workspaceMgr = null, appC
     // Serve static files (like remote.html, and later CSS/JS for it)
     // Assuming remote.html will be in src/renderer/remote_control/
     app.use(express.static(path.join(__dirname, '..', 'renderer', 'remote_control')));
+    app.use('/vendor', express.static(path.join(__dirname, '..', 'renderer', 'vendor')));
     // Add static serving for the top-level assets directory
     app.use('/assets', express.static(path.join(__dirname, '..', '..', 'assets')));
 

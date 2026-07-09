@@ -5,7 +5,12 @@
  * Handles region creation, styling, and management for waveforms
  */
 
-// Region state variables
+import {
+    resolveTrimBounds,
+    hasActiveTrim,
+    trimTimesForPersist,
+} from './waveformTrimTimeUtils.js';
+
 let wsRegions = null; // Regions plugin instance
 let currentLiveTrimRegion = null; // To store the live trimRegion object
 let isDestroyingWaveform = false; // Flag to prevent callback loops during destruction
@@ -15,6 +20,126 @@ let onTrimChangeCallback = null; // Callback for trim changes
 
 // Constants
 const MIN_REGION_DURATION = 0.01; // seconds, to avoid issues with zero-width regions
+
+function getWaveformWrapper(wavesurferInstance) {
+    return wavesurferInstance?.getWrapper?.() || wavesurferInstance?.container || null;
+}
+
+function getTrimMarkerLayer(wavesurferInstance) {
+    const host = getWaveformWrapper(wavesurferInstance);
+    if (!host) return null;
+
+    const container = host.closest('#waveformDisplay, #expandedWaveformDisplay')
+        || (host.id === 'waveformDisplay' || host.id === 'expandedWaveformDisplay' ? host : host.parentElement)
+        || host;
+
+    let layer = container.querySelector(':scope > .trim-marker-layer');
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.className = 'trim-marker-layer';
+        container.appendChild(layer);
+    }
+    return layer;
+}
+
+function findTrimRegion(regions) {
+    if (Array.isArray(regions)) {
+        return regions.find((region) => region?.id === 'trimRegion' || region?.id === 'trimRegion-playback');
+    }
+    return regions?.trimRegion || regions?.['trimRegion-playback'] || null;
+}
+
+function positionMarkerAtLayerX(layer, marker, xPx) {
+    marker.style.left = `${xPx}px`;
+}
+
+function syncMarkerPositionsFromRegion(layer, trimRegion, inMarker, outMarker, inGrab, outGrab, duration) {
+    const regionEl = trimRegion?.element;
+    if (regionEl && layer) {
+        const layerRect = layer.getBoundingClientRect();
+        const regionRect = regionEl.getBoundingClientRect();
+        const inX = regionRect.left - layerRect.left;
+        const outX = regionRect.right - layerRect.left;
+        if (inMarker) positionMarkerAtLayerX(layer, inMarker, inX);
+        if (outMarker) positionMarkerAtLayerX(layer, outMarker, outX);
+        if (inGrab) positionMarkerAtLayerX(layer, inGrab, inX);
+        if (outGrab) positionMarkerAtLayerX(layer, outGrab, outX);
+        return;
+    }
+
+    const inPct = Math.max(0, Math.min(100, (trimRegion.start / duration) * 100));
+    const outPct = Math.max(0, Math.min(100, (trimRegion.end / duration) * 100));
+    if (inMarker) inMarker.style.left = `${inPct}%`;
+    if (outMarker) outMarker.style.left = `${outPct}%`;
+    if (inGrab) inGrab.style.left = `${inPct}%`;
+    if (outGrab) outGrab.style.left = `${outPct}%`;
+}
+
+function syncTrimGrabAffordances(layer, trimRegion, duration, inGrab, outGrab) {
+    if (!layer) return;
+    if (!inGrab) {
+        inGrab = document.createElement('div');
+        inGrab.className = 'trim-grab-affordance trim-grab-affordance-in';
+        inGrab.setAttribute('aria-hidden', 'true');
+        layer.appendChild(inGrab);
+    }
+    if (!outGrab) {
+        outGrab = document.createElement('div');
+        outGrab.className = 'trim-grab-affordance trim-grab-affordance-out';
+        outGrab.setAttribute('aria-hidden', 'true');
+        layer.appendChild(outGrab);
+    }
+    syncMarkerPositionsFromRegion(layer, trimRegion, null, null, inGrab, outGrab, duration);
+    return { inGrab, outGrab };
+}
+
+function syncTrimBracketMarkers(wavesurferInstance, regionsInstance = wsRegions) {
+    const layer = getTrimMarkerLayer(wavesurferInstance);
+    if (!layer || !regionsInstance) return;
+
+    const duration = wavesurferInstance.getDuration();
+    if (!duration || duration <= 0) return;
+
+    const trimRegion = findTrimRegion(regionsInstance.getRegions());
+    if (!trimRegion) {
+        layer.querySelectorAll('.trim-bracket-marker, .trim-grab-affordance').forEach((el) => el.remove());
+        return;
+    }
+
+    let inGrab = layer.querySelector('.trim-grab-affordance-in');
+    let outGrab = layer.querySelector('.trim-grab-affordance-out');
+    ({ inGrab, outGrab } = syncTrimGrabAffordances(layer, trimRegion, duration, inGrab, outGrab) || { inGrab, outGrab });
+
+    const { trimStartTime, trimEndTime } = trimTimesForPersist(trimRegion.start, trimRegion.end, duration);
+    if (!hasActiveTrim(trimStartTime, trimEndTime, duration)) {
+        layer.querySelectorAll('.trim-bracket-marker').forEach((el) => el.remove());
+        return;
+    }
+
+    const hasInTrim = trimStartTime > 0;
+    const hasOutTrim = trimEndTime != null && trimEndTime < duration - 0.01;
+
+    let inMarker = layer.querySelector('.trim-bracket-marker-in');
+    let outMarker = layer.querySelector('.trim-bracket-marker-out');
+    if (!inMarker) {
+        inMarker = document.createElement('div');
+        inMarker.className = 'trim-bracket-marker trim-bracket-marker-in';
+        inMarker.setAttribute('aria-hidden', 'true');
+        layer.appendChild(inMarker);
+    }
+    if (!outMarker) {
+        outMarker = document.createElement('div');
+        outMarker.className = 'trim-bracket-marker trim-bracket-marker-out';
+        outMarker.setAttribute('aria-hidden', 'true');
+        layer.appendChild(outMarker);
+    }
+
+    inMarker.textContent = '{';
+    outMarker.textContent = '}';
+    inMarker.classList.toggle('trim-bracket-bold', hasInTrim);
+    outMarker.classList.toggle('trim-bracket-bold', hasOutTrim);
+    syncMarkerPositionsFromRegion(layer, trimRegion, inMarker, outMarker, inGrab, outGrab, duration);
+}
 
 /**
  * Initialize the region management module
@@ -50,6 +175,12 @@ function setDestroyingFlag(isDestroying) {
     isDestroyingWaveform = isDestroying;
 }
 
+function notifyTrimChange(regionStart, regionEnd, fileDuration) {
+    if (typeof onTrimChangeCallback !== 'function') return;
+    const { trimStartTime, trimEndTime } = trimTimesForPersist(regionStart, regionEnd, fileDuration);
+    onTrimChangeCallback(trimStartTime, trimEndTime);
+}
+
 /**
  * Load regions from cue data
  * @param {object} cue - The cue object containing trim data
@@ -62,53 +193,103 @@ function loadRegionsFromCue(cue, wavesurferInstance) {
     }
 
     console.log('WaveformRegions: Loading regions from cue:', cue.id);
-    
-    // Clear existing regions first
+
     clearAllRegionsHard();
-    
-    // Check if cue has trim data
-    if (cue.trimStartTime !== undefined && cue.trimEndTime !== undefined) {
-        const duration = wavesurferInstance.getDuration();
-        
-        if (duration > 0 && cue.trimStartTime >= 0 && cue.trimEndTime <= duration) {
-            console.log('WaveformRegions: Creating trim region:', {
-                start: cue.trimStartTime,
-                end: cue.trimEndTime,
-                duration: duration
-            });
-            
-            try {
-                // Create the trim region
-                const trimRegion = wsRegions.addRegion({
-                    id: 'trimRegion',
-                    start: cue.trimStartTime,
-                    end: cue.trimEndTime,
-                    color: 'rgba(0, 255, 0, 0.3)',
-                    drag: true,
-                    resize: true
-                });
-                
-                currentLiveTrimRegion = trimRegion;
-                console.log('WaveformRegions: Trim region created successfully');
-                
-                // Apply styling after a short delay to ensure region is rendered
-                setTimeout(() => {
-                    styleRegions(wavesurferInstance);
-                }, 100);
-                
-            } catch (error) {
-                console.error('WaveformRegions: Error creating trim region:', error);
-            }
-        } else {
-            console.log('WaveformRegions: Invalid trim times for duration:', {
-                trimStart: cue.trimStartTime,
-                trimEnd: cue.trimEndTime,
-                duration: duration
-            });
-        }
-    } else {
-        console.log('WaveformRegions: No trim data in cue, showing full duration');
+
+    const duration = wavesurferInstance.getDuration();
+    if (!duration || duration <= 0) {
+        console.log('WaveformRegions: Duration not ready for regions');
+        return;
     }
+
+    const { trimStart, trimEnd } = resolveTrimBounds(
+        cue.trimStartTime,
+        cue.trimEndTime,
+        duration
+    );
+
+    try {
+        const trimRegion = wsRegions.addRegion({
+            id: 'trimRegion',
+            start: trimStart,
+            end: trimEnd,
+            color: hasActiveTrim(cue.trimStartTime, cue.trimEndTime, duration)
+                ? 'rgba(34, 197, 94, 0.28)'
+                : 'rgba(34, 197, 94, 0.12)',
+            drag: false,
+            resize: true,
+            resizeStart: true,
+            resizeEnd: true,
+        });
+
+        currentLiveTrimRegion = trimRegion;
+
+        if (hasActiveTrim(cue.trimStartTime, cue.trimEndTime, duration)) {
+            setTimeout(() => {
+                styleRegions(wavesurferInstance);
+                syncTrimBracketMarkers(wavesurferInstance);
+            }, 100);
+        } else {
+            setTimeout(() => syncTrimBracketMarkers(wavesurferInstance), 100);
+        }
+    } catch (error) {
+        console.error('WaveformRegions: Error creating trim region:', error);
+    }
+}
+
+/**
+ * Apply read-only trim visualization for playback waveforms (no drag/resize).
+ */
+function loadReadOnlyTrimRegions(cue, wavesurferInstance, regionsInstance = wsRegions) {
+    if (!regionsInstance || !wavesurferInstance || !cue) return;
+
+    const duration = wavesurferInstance.getDuration();
+    if (!duration || duration <= 0) return;
+
+    if (!hasActiveTrim(cue.trimStartTime, cue.trimEndTime, duration)) return;
+
+    const { trimStart, trimEnd } = resolveTrimBounds(
+        cue.trimStartTime,
+        cue.trimEndTime,
+        duration
+    );
+
+    try {
+        regionsInstance.clearRegions?.();
+    } catch (e) { /* ignore */ }
+
+    regionsInstance.addRegion({
+        id: 'trimRegion-playback',
+        start: trimStart,
+        end: trimEnd,
+        color: 'rgba(34, 197, 94, 0.22)',
+        drag: false,
+        resize: false,
+    });
+
+    if (trimStart > MIN_REGION_DURATION) {
+        regionsInstance.addRegion({
+            id: 'cutOverlay-before',
+            start: 0,
+            end: Math.max(0, trimStart - MIN_REGION_DURATION),
+            color: 'rgba(0, 0, 0, 0.45)',
+            drag: false,
+            resize: false,
+        });
+    }
+
+    if (trimEnd < duration - MIN_REGION_DURATION) {
+        regionsInstance.addRegion({
+            id: 'cutOverlay-after',
+            start: Math.min(duration, trimEnd + MIN_REGION_DURATION),
+            end: duration,
+            color: 'rgba(0, 0, 0, 0.45)',
+            drag: false,
+            resize: false,
+        });
+    }
+
+    setTimeout(() => syncTrimBracketMarkers(wavesurferInstance, regionsInstance), 100);
 }
 
 /**
@@ -172,14 +353,11 @@ function clearAllRegionsHard() {
     }
 }
 
-/**
- * Clear all cut overlays immediately
- */
-function clearAllCutOverlaysImmediate() {
-    if (!wsRegions) return;
-    
+function clearCutOverlaysForInstance(regionsInstance = wsRegions) {
+    if (!regionsInstance) return;
+
     try {
-        const regions = wsRegions.getRegions();
+        const regions = regionsInstance.getRegions();
         if (Array.isArray(regions)) {
             regions.forEach(region => {
                 if (region && region.id && region.id.startsWith('cutOverlay')) {
@@ -195,11 +373,18 @@ function clearAllCutOverlaysImmediate() {
 }
 
 /**
+ * Clear all cut overlays immediately
+ */
+function clearAllCutOverlaysImmediate() {
+    clearCutOverlaysForInstance(wsRegions);
+}
+
+/**
  * Style regions with cut overlays
  * @param {object} wavesurferInstance - The WaveSurfer instance
  */
-function styleRegions(wavesurferInstance) {
-    if (!wsRegions || !wavesurferInstance) {
+function styleRegions(wavesurferInstance, regionsInstance = wsRegions) {
+    if (!regionsInstance || !wavesurferInstance) {
         console.warn('WaveformRegions: Cannot style regions - missing dependencies');
         return;
     }
@@ -207,7 +392,7 @@ function styleRegions(wavesurferInstance) {
     console.log('WaveformRegions: Styling regions with cut overlays');
     
     try {
-        const regions = wsRegions.getRegions();
+        const regions = regionsInstance.getRegions();
         const trimRegion = Array.isArray(regions) ? 
             regions.find(r => r && r.id === 'trimRegion') : 
             (regions ? regions['trimRegion'] : null);
@@ -223,40 +408,30 @@ function styleRegions(wavesurferInstance) {
             return;
         }
         
-        // Clear existing cut overlays first (but preserve the main trim region)
-        clearAllCutOverlaysImmediate();
-        
-        // Create cut overlays for areas outside the trim region
-        const cutOverlays = [];
-        
-        // Cut overlay before trim start
+        clearCutOverlaysForInstance(regionsInstance);
+
         if (trimRegion.start > 0.01) {
-            const beforeCut = wsRegions.addRegion({
+            regionsInstance.addRegion({
                 id: 'cutOverlay-before',
                 start: 0,
                 end: Math.max(0, trimRegion.start - MIN_REGION_DURATION),
-                color: 'rgba(255, 0, 0, 0.4)', // Red overlay for what will be cut
+                color: 'rgba(0, 0, 0, 0.42)',
                 drag: false,
                 resize: false
             });
-            cutOverlays.push(beforeCut);
         }
-        
-        // Cut overlay after trim end
+
         if (trimRegion.end < duration - 0.01) {
-            const afterCut = wsRegions.addRegion({
+            regionsInstance.addRegion({
                 id: 'cutOverlay-after',
                 start: Math.min(duration, trimRegion.end + MIN_REGION_DURATION),
                 end: duration,
-                color: 'rgba(255, 0, 0, 0.4)', // Red overlay for what will be cut
+                color: 'rgba(0, 0, 0, 0.42)',
                 drag: false,
                 resize: false
             });
-            cutOverlays.push(afterCut);
         }
-        
-        console.log('WaveformRegions: Created cut overlays:', cutOverlays.length);
-        
+
     } catch (error) {
         console.error('WaveformRegions: Error styling regions:', error);
     }
@@ -266,25 +441,16 @@ function styleRegions(wavesurferInstance) {
  * Update trim inputs from region data
  * @param {object} region - The region object
  */
-function updateTrimInputsFromRegion(region) {
+function updateTrimInputsFromRegion(region, wavesurferInstance) {
     if (!region || region.id !== 'trimRegion') {
-        console.log('WaveformRegions: No trim region to update inputs from');
+        if (typeof onTrimChangeCallback === 'function') {
+            onTrimChangeCallback(0, undefined);
+        }
         return;
     }
-    
-    console.log('WaveformRegions: Updating trim inputs from region:', {
-        start: region.start,
-        end: region.end
-    });
-    
-    // Notify callback of trim change
-    if (typeof onTrimChangeCallback === 'function') {
-        try {
-            onTrimChangeCallback(region.start, region.end);
-        } catch (error) {
-            console.error('WaveformRegions: Error in onTrimChange callback:', error);
-        }
-    }
+
+    const duration = wavesurferInstance?.getDuration?.() || 0;
+    notifyTrimChange(region.start, region.end, duration);
 }
 
 /**
@@ -308,19 +474,12 @@ function getCurrentTrimTimes() {
     }
     
     if (trimRegion) {
-        console.log('WaveformRegions: Found trimRegion:', {
-            start: trimRegion.start,
-            end: trimRegion.end
-        });
         return {
             trimStartTime: trimRegion.start,
-            trimEndTime: trimRegion.end
+            trimEndTime: trimRegion.end,
         };
-    } else {
-        console.log('WaveformRegions: No trimRegion found. Available regions:', 
-            Array.isArray(regions) ? regions.map(r => r.id) : Object.keys(regions || {}));
     }
-    
+
     return null;
 }
 
@@ -335,49 +494,48 @@ function setupRegionEventHandlers(wavesurferInstance) {
     }
     
     console.log('WaveformRegions: Setting up region event handlers...');
+
+    wavesurferInstance.on('zoom', () => {
+        if (!isDestroyingWaveform) {
+            syncTrimBracketMarkers(wavesurferInstance);
+        }
+    });
     
     // Handle when regions are created
     wsRegions.on('region-created', (region) => {
         if (!wavesurferInstance || !wsRegions || isDestroyingWaveform) return;
-        console.log('WaveformRegions: Region created event fired:', region.id);
-        updateTrimInputsFromRegion(region);
-        
-        // Apply cut overlays when trim region is created
-        if (region.id === 'trimRegion') {
+        if (region.id === 'trimRegion' || region.id === 'trimRegion-playback') {
             setTimeout(() => {
-                console.log('WaveformRegions: Applying cut overlays after trim region created');
                 styleRegions(wavesurferInstance);
+                syncTrimBracketMarkers(wavesurferInstance);
             }, 100);
         }
     });
     
-    // Handle when regions are updated (dragged/resized)
+    wsRegions.on('region-update', (region) => {
+        if (!wavesurferInstance || !wsRegions || isDestroyingWaveform) return;
+        if (region?.id === 'trimRegion' || region?.id === 'trimRegion-playback') {
+            syncTrimBracketMarkers(wavesurferInstance);
+        }
+    });
+
+    // Handle when regions are updated (drag/resize finished — WaveSurfer v7 emits this, not region-update-end)
     wsRegions.on('region-updated', (region) => {
         if (!wavesurferInstance || !wsRegions || isDestroyingWaveform) return;
-        console.log('WaveformRegions: Region updated event fired:', region.id);
-        updateTrimInputsFromRegion(region);
-        
-        // Update cut overlays when trim region is updated
         if (region.id === 'trimRegion') {
-            setTimeout(() => {
-                console.log('WaveformRegions: Updating cut overlays after trim region updated');
-                styleRegions(wavesurferInstance);
-            }, 50);
+            updateTrimInputsFromRegion(region, wavesurferInstance);
+            styleRegions(wavesurferInstance);
+            syncTrimBracketMarkers(wavesurferInstance);
         }
     });
-    
-    // Handle when region update ends (final position)
+
+    // Legacy event name — keep as fallback for older builds
     wsRegions.on('region-update-end', (region) => {
         if (!wavesurferInstance || !wsRegions || isDestroyingWaveform) return;
-        console.log('WaveformRegions: Region update ended event fired:', region.id);
-        updateTrimInputsFromRegion(region);
-        
-        // Update cut overlays when trim region update ends
         if (region.id === 'trimRegion') {
-            setTimeout(() => {
-                console.log('WaveformRegions: Finalizing cut overlays after trim region update ended');
-                styleRegions(wavesurferInstance);
-            }, 100);
+            updateTrimInputsFromRegion(region, wavesurferInstance);
+            styleRegions(wavesurferInstance);
+            syncTrimBracketMarkers(wavesurferInstance);
         }
     });
     
@@ -387,7 +545,7 @@ function setupRegionEventHandlers(wavesurferInstance) {
         console.log('WaveformRegions: Region removed event fired:', region.id);
         // Only treat as full-duration reset if the actual trim region was removed by the user.
         if (region && region.id === 'trimRegion') {
-            updateTrimInputsFromRegion(null);
+            updateTrimInputsFromRegion(null, wavesurferInstance);
         } else {
             // Ignore removal of non-trim overlay regions to avoid clobbering trims
             console.log('WaveformRegions: Non-trim region removed; ignoring for trim inputs.');
@@ -437,9 +595,11 @@ export {
     getRegionsInstance,
     setDestroyingFlag,
     loadRegionsFromCue,
+    loadReadOnlyTrimRegions,
     clearAllRegionsHard,
     clearAllCutOverlaysImmediate,
     styleRegions,
+    syncTrimBracketMarkers,
     updateTrimInputsFromRegion,
     getCurrentTrimTimes,
     setupRegionEventHandlers,

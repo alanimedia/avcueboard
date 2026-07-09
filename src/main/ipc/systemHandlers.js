@@ -1,4 +1,4 @@
-const { clipboard, app, nativeTheme } = require('electron');
+const { clipboard, app, nativeTheme, dialog } = require('electron');
 const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 const https = require('https');
@@ -184,6 +184,22 @@ function registerSystemHandlers(ipcMain, { appConfigManager, mainWindow, openEas
         } else {
             logger.error("IPC_HANDLER: 'open-easter-egg-game' - openEasterEggGameWindowCallback function not found or not a function.");
         }
+    });
+
+    ipcMain.handle('show-open-dialog', async (event, options = {}) => {
+        const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+        if (!win) {
+            return { canceled: true, filePaths: [] };
+        }
+        return dialog.showOpenDialog(win, options);
+    });
+
+    ipcMain.handle('show-save-dialog', async (event, options = {}) => {
+        const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+        if (!win) {
+            return { canceled: true, filePath: undefined };
+        }
+        return dialog.showSaveDialog(win, options);
     });
 }
 

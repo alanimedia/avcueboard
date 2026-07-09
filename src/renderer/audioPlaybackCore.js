@@ -330,14 +330,17 @@ export function _playTargetItem(cueId, playlistItemIndex, isResumeForSeekAndFade
     // Pre-validate file existence if possible
     if (typeof electronAPIForPreload !== 'undefined' && electronAPIForPreload.checkFileExists) {
         electronAPIForPreload.checkFileExists(filePath)
-            .then((exists) => {
+            .then((result) => {
+                const exists = typeof result === 'object' ? result.exists : result;
+                const resolvedPath = typeof result === 'object' && result.resolvedPath
+                    ? result.resolvedPath
+                    : filePath;
                 if (!exists) {
-                    log.error(`File does not exist: ${filePath}`);
-                    _handleFilePathError(cueId, playingState, 'file_not_found', filePath, context);
+                    log.error(`File does not exist: ${resolvedPath}`);
+                    _handleFilePathError(cueId, playingState, 'file_not_found', resolvedPath, context);
                     return;
                 }
-                // File exists, proceed with playback
-                _proceedWithPlayback(cueId, playingState, filePath, currentItemName, actualItemIndexInOriginalList, isResumeForSeekAndFade, context);
+                _proceedWithPlayback(cueId, playingState, resolvedPath, currentItemName, actualItemIndexInOriginalList, isResumeForSeekAndFade, context);
             })
             .catch((error) => {
                 log.warn(`Unable to check file existence for ${filePath}, proceeding anyway:`, error);

@@ -6,6 +6,8 @@ const { Worker } = require('worker_threads');
 const nodePath = require('path'); // To distinguish from browser path module if any
 const workspaceManager = require('./workspaceManager');
 const cueManager = require('./cueManager');
+const { resolveAudioFilePath, isLikelyIncompletePath } = require('./utils/audioPathUtils');
+const { getAudioFileDuration: getAudioFileDurationUtil } = require('./utils/audioFileUtils');
 const { v4: uuidv4 } = require('uuid');
 
 
@@ -332,7 +334,10 @@ function initialize(application, mainWin, cueMgrModule, appCfgManager, wsMgr, ws
             // Temporarily log the full cueData object for debugging
             console.log(`IPC_HANDLER: 'add-or-update-cue' full cueData:`, JSON.stringify(cueData, null, 2));
             
-            const processedCue = await cueManagerRef.addOrUpdateProcessedCue(cueData);
+            const processedCue = await cueManagerRef.addOrUpdateProcessedCue(
+                cueData,
+                workspaceManagerRef?.getCurrentWorkspacePath?.() || cueManagerRef.getWorkspaceDirectory?.()
+            );
             if (mainWindowRef && mainWindowRef.webContents && !mainWindowRef.webContents.isDestroyed()) {
                  console.log('IPC Handlers: Sending cues-updated-from-main after add-or-update-cue.');
                  mainWindowRef.webContents.send('cues-updated-from-main', cueManagerRef.getWorkspaceSnapshot());
@@ -588,20 +593,27 @@ function initialize(application, mainWin, cueMgrModule, appCfgManager, wsMgr, ws
                     duration: null 
                 };
             }
+
+            const workspaceDir = workspaceManagerRef?.getCurrentWorkspacePath?.()
+                || cueManagerRef?.getWorkspaceDirectory?.()
+                || null;
+            const resolvedPath = workspaceDir
+                ? resolveAudioFilePath(filePath, workspaceDir)
+                : filePath;
             
-            const duration = await getAudioFileDuration(filePath);
+            const duration = await getAudioFileDurationUtil(resolvedPath, workspaceDir);
             if (duration !== null) {
                 return { 
                     success: true, 
                     duration: duration, 
-                    filePath: filePath 
+                    filePath: resolvedPath || filePath
                 };
             } else {
                 return { 
                     success: false, 
                     error: 'Could not determine duration', 
                     duration: null,
-                    filePath: filePath
+                    filePath: resolvedPath || filePath
                 };
             }
         } catch (error) {
@@ -613,6 +625,60 @@ function initialize(application, mainWin, cueMgrModule, appCfgManager, wsMgr, ws
                 filePath: filePath
             };
         }
+    });
+
+    ipcMain.handle('resolve-audio-path', async (event, filePath) => {
+        try {
+            if (!filePath || typeof filePath !== 'string') {
+                return { success: false, error: 'No file path provided', path: null };
+            }
+            const workspaceDir = workspaceManagerRef?.getCurrentWorkspacePath?.()
+                || cueManagerRef?.getWorkspaceDirectory?.()
+                || null;
+            const resolvedPath = workspaceDir
+                ? resolveAudioFilePath(filePath, workspaceDir)
+                : filePath;
+            if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+                return {
+                    success: false,
+                    error: isLikelyIncompletePath(filePath)
+                        ? 'Audio file path is incomplete and could not be resolved in the workspace'
+                        : 'Audio file not found',
+                    path: resolvedPath || filePath
+                };
+            }
+            return { success: true, path: resolvedPath };
+        } catch (error) {
+            return { success: false, error: error.message, path: null };
+        }
+    });
+
+    ipcMain.handle('fs-check-file-exists', async (event, filePath) => {
+        try {
+            if (!filePath) {
+                return { exists: false, resolvedPath: null };
+            }
+            const workspaceDir = workspaceManagerRef?.getCurrentWorkspacePath?.()
+                || cueManagerRef?.getWorkspaceDirectory?.()
+                || null;
+            const resolvedPath = workspaceDir
+                ? resolveAudioFilePath(filePath, workspaceDir)
+                : filePath;
+            return {
+                exists: !!(resolvedPath && fs.existsSync(resolvedPath)),
+                resolvedPath: resolvedPath || filePath
+            };
+        } catch (error) {
+            return { exists: false, resolvedPath: filePath, error: error.message };
+        }
+    });
+
+    ipcMain.handle('show-open-dialog', async (event, options = {}) => {
+        const win = mainWindowRef && !mainWindowRef.isDestroyed() ? mainWindowRef : null;
+        if (!win) {
+            return { canceled: true, filePaths: [] };
+        }
+        return dialog.showOpenDialog(win, options);
     });
 
     ipcMain.handle('get-config-path', () => {

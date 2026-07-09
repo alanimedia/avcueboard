@@ -12,6 +12,7 @@ import * as appConfigUI from './ui/appConfigUI.js'; // Import new module
 import * as waveformControls from './ui/waveformControls.js'; // Ensure this is imported if used by init
 import * as mainWaveformPanel from './ui/mainWaveformPanel.js';
 import { getSectionIdFromDropTarget } from './ui/cueGridSections.js';
+import { getDroppedFilePath } from './droppedFileUtils.js';
 
 // Module references that will be initialized
 let cueStoreModule; // Renamed for clarity, will hold the passed cueStore module
@@ -113,7 +114,11 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
         isEditMode,
         isPersistedEditMode,
         openPropertiesSidebar: propertiesSidebar.openPropertiesSidebar,
+        openPropertiesSidebarForSelection: propertiesSidebar.openPropertiesSidebarForSelection,
         hidePropertiesSidebar: propertiesSidebar.hidePropertiesSidebar,
+        getActivePropertiesCueId: propertiesSidebar.getActivePropertiesCueId,
+        getActivePropertiesCueIds: propertiesSidebar.getActivePropertiesCueIds,
+        cancelPendingPropertiesSave: propertiesSidebar.cancelPendingPropertiesSave,
         getCurrentAppConfig: appConfigUIModuleInternal.getCurrentAppConfig,
         openNewCueModal: modalsModule.openNewCueModal, 
         showMultipleFilesDropModal: modalsModule.showMultipleFilesDropModal,
@@ -121,7 +126,8 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
         getOrGenerateWaveformPeaks: electronAPIForPreload.getOrGenerateWaveformPeaks,
         highlightPlayingPlaylistItem: propertiesSidebar.highlightPlayingPlaylistItemInSidebar,
         toggleConfigSidebar: configSidebar.toggleConfigSidebar,
-        showMainWaveformForCue: (cue) => mainWaveformPanelModule?.showForCue?.(cue)
+        showMainWaveformForCue: (cue) => mainWaveformPanelModule?.showForCue?.(cue),
+        clearMainWaveformPreview: () => mainWaveformPanelModule?.clearIdlePreview?.()
     };
 
     // Pass the *assigned* modules to sub-module initializers
@@ -466,6 +472,16 @@ async function handleWorkspaceChange() {
 
 // Exposed for dragDropHandler to add files to a specific cue if properties sidebar is open
 async function handleSingleFileDrop(filePath, dropTargetElement) {
+    if (!filePath || !String(filePath).trim()) {
+        alert('Could not get a valid file path for this drop.');
+        return;
+    }
+    const hasDirectory = filePath.includes('/') || filePath.includes('\\') || /^[a-zA-Z]:/.test(filePath);
+    if (!hasDirectory) {
+        alert('The dropped file did not include a full path. Drag from File Explorer or drop on the cue grid.');
+        return;
+    }
+
     const mainDropArea = document.getElementById('cueGridContainer'); // Main grid
     const propertiesSidebarDOM = document.getElementById('propertiesSidebar');
     const cueConfigModalDOM = document.getElementById('cueConfigModal');
@@ -539,7 +555,10 @@ async function handleMultipleFileDrop(files, dropTargetElement) {
     // 1. Try to delegate to properties sidebar if it's the target
     if (propertiesSidebarDOM && !propertiesSidebarDOM.classList.contains('hidden') && propertiesSidebarDOM.contains(dropTargetElement)) {
         // Convert FileList to array of objects for sidebars.addFilesToStagedPlaylist
-        const fileArray = Array.from(files).map(file => ({ path: file.path, name: file.name }));
+        const fileArray = Array.from(files).map(file => ({
+            path: getDroppedFilePath(file),
+            name: file.name
+        })).filter(file => file.path);
         // Assuming addFilesToStagedPlaylist handles playlist cues. 
         // If it needs to open properties sidebar for a single file cue, that logic would be in sidebars.js
         if (propertiesSidebar && typeof propertiesSidebar.addFilesToStagedPlaylist === 'function') {
