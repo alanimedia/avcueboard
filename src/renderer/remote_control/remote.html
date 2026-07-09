@@ -1274,6 +1274,7 @@
         const CUE_TRIGGER_LOCK_MS = 500;
         const waveformPeaksCache = new Map();
         const remoteWaveformLaneMap = new Map();
+        const lastRemotePlaybackByCueId = new Map();
         const remoteCueMeterLevels = {};
         let remoteWaveformPanelEnabled = false;
         let remoteWaveformEnabledInitialized = false;
@@ -1325,6 +1326,18 @@
 
         function mergeRemotePlaybackState(prevCue, nextCue) {
             if (!prevCue || !nextCue) return nextCue;
+
+            const lastRemote = lastRemotePlaybackByCueId.get(nextCue.id);
+            if (lastRemote && !isActivePlaybackStatus(lastRemote.status)) {
+                return {
+                    ...nextCue,
+                    status: lastRemote.status,
+                    currentTimeS: lastRemote.status === 'stopped' ? 0 : (lastRemote.currentTimeS ?? 0),
+                    progressRatio: 0,
+                    fileProgressRatio: 0
+                };
+            }
+
             if (!isActivePlaybackStatus(prevCue.status)) return nextCue;
             if (isActivePlaybackStatus(nextCue.status)) return nextCue;
             return {
@@ -1760,11 +1773,23 @@
                     if (currentCues[message.cue.id]) {
                         const mergedCue = { ...currentCues[message.cue.id], ...message.cue };
                         currentCues[message.cue.id] = mergedCue;
+                        if (message.cue?.id && message.cue.status) {
+                            lastRemotePlaybackByCueId.set(message.cue.id, {
+                                status: message.cue.status,
+                                currentTimeS: message.cue.currentTimeS
+                            });
+                        }
                         if (remoteMode === 'playback') {
                             updateCueButtonRemote(mergedCue);
                         }
                     } else {
                         currentCues[message.cue.id] = message.cue;
+                        if (message.cue?.id && message.cue.status) {
+                            lastRemotePlaybackByCueId.set(message.cue.id, {
+                                status: message.cue.status,
+                                currentTimeS: message.cue.currentTimeS
+                            });
+                        }
                         ws.send(JSON.stringify({ action: 'request_all_cues_for_remote' }));
                     }
                 } else if (message.action === 'pong') {
@@ -2329,6 +2354,7 @@
         }
 
         function drawWaveformPlayhead(ctx, width, height, cue) {
+            if (!isActivePlaybackStatus(cue?.status)) return;
             const playheadRatio = typeof cue.fileProgressRatio === 'number'
                 ? cue.fileProgressRatio
                 : (typeof cue.progressRatio === 'number' ? cue.progressRatio : 0);
@@ -2405,32 +2431,40 @@
         }
 
         async function handleRemoteWaveformUpdate(cue) {
+            const status = cue?.status || 'stopped';
+            const shouldShowLane = isActivePlaybackStatus(status) && cue?.id && cue.hasWaveform;
+
             if (!isRemoteWaveformPanelEnabled()) {
-                if (cue?.id && cue.status === 'stopped' && remoteWaveformLaneMap.has(cue.id)) {
+                if (cue?.id && !shouldShowLane && remoteWaveformLaneMap.has(cue.id)) {
                     removeRemoteLane(cue.id);
                 }
                 return;
             }
 
-            if (!cue?.id || !cue.hasWaveform) {
-                if (cue?.status === 'stopped') removeRemoteLane(cue.id);
+            if (!shouldShowLane) {
+                if (cue?.id) removeRemoteLane(cue.id);
                 return;
             }
 
-            const status = cue.status || 'stopped';
-            if (isActivePlaybackStatus(status)) {
-                const prevItem = remoteWaveformLaneMap.get(cue.id)?.cue?.playlistItemName;
-                if (remoteWaveformLaneMap.has(cue.id) && cue.playlistItemName !== prevItem) {
-                    removeRemoteLane(cue.id);
-                }
-                await ensureRemoteLane(cue);
-                redrawRemoteLane(cue);
-            } else if (status === 'stopped') {
+            const prevItem = remoteWaveformLaneMap.get(cue.id)?.cue?.playlistItemName;
+            if (remoteWaveformLaneMap.has(cue.id) && cue.playlistItemName !== prevItem) {
                 removeRemoteLane(cue.id);
             }
+            await ensureRemoteLane(cue);
+            redrawRemoteLane(cue);
+        }
+
+        function pruneInactiveRemoteLanes() {
+            [...remoteWaveformLaneMap.keys()].forEach((cueId) => {
+                const cue = currentCues[cueId];
+                if (!cue || !isActivePlaybackStatus(cue.status) || !cue.hasWaveform) {
+                    removeRemoteLane(cueId);
+                }
+            });
         }
 
         function syncPlayingCuesToRemotePanel() {
+            pruneInactiveRemoteLanes();
             Object.values(currentCues).forEach((cue) => {
                 if (isActivePlaybackStatus(cue.status)) {
                     handleRemoteWaveformUpdate(cue);

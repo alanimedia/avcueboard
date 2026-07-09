@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.8
+
+### Fixed
+- Web remote bottom-panel waveform lanes lingering after playback stops or cues enter `cued` state
+- Stale playing state restored on cue sync causing waveforms to reappear when idle
+- Playhead drawn on web remote waveforms when nothing is actively playing
+
 ## 1.5.7
 
 ### Added
