@@ -166,4 +166,72 @@
 }
 #dragOverlay.visible {
     opacity: 1;
-} 
+}
+
+.relink-modal-content {
+    max-width: 960px;
+    width: 92%;
+}
+
+.relink-status-message {
+    min-height: 1.2em;
+    color: #aaaaaa;
+    margin: 0;
+}
+
+.relink-table-wrap {
+    overflow: auto;
+    max-height: 50vh;
+    border: 1px solid #444444;
+    border-radius: var(--border-radius);
+}
+
+.relink-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.relink-table th,
+.relink-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #3a3a3a;
+    text-align: left;
+    vertical-align: top;
+}
+
+.relink-table th {
+    background: #333333;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.relink-path-cell {
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 0.85em;
+    word-break: break-all;
+    max-width: 280px;
+}
+
+.relink-status-matched {
+    color: #6fcf97;
+}
+
+.relink-status-ambiguous {
+    color: #f2c94c;
+}
+
+.relink-status-not_found {
+    color: #eb5757;
+}
+
+.relink-candidate-select {
+    width: 100%;
+    max-width: 280px;
+    padding: 6px;
+    border: 1px solid var(--button-secondary-border);
+    border-radius: var(--border-radius);
+    background-color: var(--button-secondary-bg);
+    color: var(--text-color);
+}

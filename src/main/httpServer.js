@@ -47,6 +47,7 @@ const {
     normalizeRetriggerBehaviorOverride,
     resolveEffectiveRetriggerBehavior
 } = require('./retriggerBehaviorUtils');
+const { collectMissingMedia, summarizeMissingMedia } = require('./utils/audioRelinkUtils');
 const {
     mergeCuePatch,
     sanitizeConfigPatch,
@@ -228,7 +229,7 @@ async function handleRemoteMessage(ws, message) {
             }
             sendToClient(ws, {
                 type: 'cue_detail',
-                payload: processCueDetailForRemote(cue, appConfigRef || {})
+                payload: processCueDetailForRemote(cue, appConfigRef || {}, getWorkspaceDirectoryForRemote())
             });
             return;
         }
@@ -364,6 +365,17 @@ async function handleRemoteMessage(ws, message) {
     }
 }
 
+function getWorkspaceDirectoryForRemote() {
+    return workspaceManagerRef?.getCurrentWorkspacePath?.()
+        || cueManagerRef?.getWorkspaceDirectory?.()
+        || null;
+}
+
+function cueHasMissingMedia(cue, workspaceDir) {
+    if (!cue) return false;
+    return collectMissingMedia([cue], workspaceDir).length > 0;
+}
+
 function processCueForRemote(cue, overrides = {}) {
     let initialTrimmedDurationValueS = 0;
     let originalKnownDurationS = 0;
@@ -435,12 +447,18 @@ function processCueForRemote(cue, overrides = {}) {
         loop: !!cue.loop,
         retriggerBehavior: normalizeRetriggerBehaviorOverride(cue.retriggerBehavior),
         effectiveRetriggerBehavior: resolveEffectiveRetriggerBehavior(cue, appConfigRef || {}),
+        mediaMissing: !!overrides.mediaMissing,
     };
 }
 
 function formatCuesForRemote(cues) {
     if (!Array.isArray(cues)) return [];
-    return cues.map(cue => processCueForRemote(cue));
+    const workspaceDir = getWorkspaceDirectoryForRemote();
+    const missingSummary = summarizeMissingMedia(collectMissingMedia(cues, workspaceDir));
+    const missingCueIds = new Set(missingSummary.missingCueIds);
+    return cues.map((cue) => processCueForRemote(cue, {
+        mediaMissing: missingCueIds.has(cue.id)
+    }));
 }
 
 function formatWorkspaceBroadcast(cueManager) {

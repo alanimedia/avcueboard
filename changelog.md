@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.0
+
+### Added
+- **Relink Missing Audio** — File menu and Settings workflow to scan a folder by filename and repair broken cue paths in `cues.json`
+- **Missing media indicators** on cue cards in playback and edit mode (desktop + web remote) with **MISSING** badge and striped overlay
+- Launch warning when missing audio is detected, with shortcut to open the relink dialog
+- **Periodic missing-media rescan** every 30 seconds (updates badges if a folder goes offline mid-show)
+- Settings → **Workspace & Media → Relink Missing Audio…**
+- **Windows in-app updates** via `electron-updater` (opt-in only: Help → Check for Updates; download and install each require confirmation; skipped versions are ignored until a newer release)
+- `audioRelinkUtils.js`, `missingMediaMonitor.js`, `updateCheckUtils.js`, `autoUpdaterService.js`, and `relinkMissingAudioUI.js`
+
+### Changed
+- **Check for Updates** now targets `alanimedia/acCompanimentAlt` GitHub Releases (Mac/Linux/dev still open the releases page)
+- Remote cue payloads include `mediaMissing` for live badge sync after relinks or offline detection
+
+### Fixed
+- Relink dialog auto-closes when all files resolve successfully instead of showing an empty success screen
+
 ## 1.8.0
 
 ### Added

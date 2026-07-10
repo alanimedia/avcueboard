@@ -128,6 +128,9 @@ function _handleCuesUpdated(updatedPayload) {
             } else {
                 uiLog.debug("CueStore (_handleCuesUpdated): Calling cueGridAPI.renderCues().");
                 cueGridAPI.renderCues();
+                if (typeof cueGridAPI.refreshMissingMediaState === 'function') {
+                    cueGridAPI.refreshMissingMediaState({ showAlert: false });
+                }
             }
         } else {
             uiLog.warn('CueStore (_handleCuesUpdated): cueGridAPI.renderCues is not a function.');

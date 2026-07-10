@@ -308,6 +308,12 @@
     unicode-bidi: normal;
 }
 
+.sidebar-content .audio-file-path-display--missing {
+    color: #ff8a80;
+    border: 1px dashed #c0392b;
+    background: rgba(192, 57, 43, 0.12);
+}
+
 .sidebar-content .audio-file-path-actions {
     display: flex;
     justify-content: flex-end;

@@ -49,6 +49,124 @@ import {
 } from './dragGapPlaceholder.js';
 import { startDragAutoScroll, stopDragAutoScroll } from './dragAutoScroll.js';
 
+function isCueMediaMissing(cueId) {
+    return missingCueIds.has(cueId);
+}
+
+function applyMissingMediaVisual(element) {
+    if (!element) return;
+    const cueId = element.dataset.cueId;
+    const isMissing = cueId && missingCueIds.has(cueId);
+    element.classList.toggle('cue-missing-media', !!isMissing);
+
+    let badge = element.querySelector('.cue-missing-media-badge');
+    if (isMissing) {
+        if (!badge) {
+            badge = document.createElement('div');
+            badge.className = 'cue-missing-media-badge';
+            badge.title = 'Audio file not found on disk';
+            badge.textContent = 'MISSING';
+            badge.setAttribute('aria-label', 'Audio file missing');
+            element.appendChild(badge);
+        }
+    } else if (badge) {
+        badge.remove();
+    }
+}
+
+function applyMissingMediaToAllCards() {
+    document.querySelectorAll('.cue-button[data-cue-id], .cue-edit-card[data-cue-id]').forEach(applyMissingMediaVisual);
+}
+
+function setMissingCueIds(cueIds) {
+    missingCueIds = cueIds instanceof Set ? cueIds : new Set(cueIds || []);
+}
+
+async function pollMissingMedia() {
+    if (!ipcRendererBindingsModule?.pollMissingMedia) {
+        const result = await ipcRendererBindingsModule?.scanMissingMedia?.();
+        if (!result?.success) {
+            return { fileCount: 0, cueCount: 0 };
+        }
+        setMissingCueIds(result?.missingCueIds || []);
+        return {
+            fileCount: result?.fileCount || result?.missing?.length || 0,
+            cueCount: result?.cueCount || missingCueIds.size
+        };
+    }
+
+    try {
+        const result = await ipcRendererBindingsModule.pollMissingMedia();
+        if (!result?.success) {
+            return { fileCount: 0, cueCount: 0 };
+        }
+        setMissingCueIds(result?.missingCueIds || []);
+        return {
+            fileCount: result?.fileCount || 0,
+            cueCount: result?.cueCount || missingCueIds.size
+        };
+    } catch (error) {
+        uiLog.warn('pollMissingMedia failed:', error);
+        return { fileCount: 0, cueCount: 0 };
+    }
+}
+
+async function ensureMissingMediaState() {
+    if (!ipcRendererBindingsModule?.scanMissingMedia) {
+        return { fileCount: 0, cueCount: 0 };
+    }
+
+    try {
+        const result = await ipcRendererBindingsModule.scanMissingMedia();
+        setMissingCueIds(result?.missingCueIds || []);
+        return {
+            fileCount: result?.fileCount || result?.missing?.length || 0,
+            cueCount: result?.cueCount || missingCueIds.size
+        };
+    } catch (error) {
+        uiLog.warn('ensureMissingMediaState failed:', error);
+        return { fileCount: 0, cueCount: 0 };
+    }
+}
+
+async function promptMissingMediaAlert(stats) {
+    if (!stats?.fileCount || !electronAPIForMissingAlert?.showConfirmationDialog) return;
+    const dialogResult = await electronAPIForMissingAlert.showConfirmationDialog({
+        type: 'warning',
+        title: 'Missing Audio Files',
+        message: `${stats.fileCount} audio file${stats.fileCount === 1 ? '' : 's'} could not be found.`,
+        detail: `${stats.cueCount} cue${stats.cueCount === 1 ? '' : 's'} affected. Use File → Relink Missing Audio to search for moved files.`,
+        buttons: ['Relink Now…', 'Dismiss'],
+        defaultId: 0,
+        cancelId: 1
+    });
+    if (dialogResult?.response === 0 && typeof openRelinkMissingAudioModal === 'function') {
+        openRelinkMissingAudioModal();
+    }
+}
+
+async function refreshMissingMediaState({ showAlert = false, rescan = true } = {}) {
+    const stats = rescan ? await pollMissingMedia() : {
+        fileCount: missingCueIds.size,
+        cueCount: missingCueIds.size
+    };
+    applyMissingMediaToAllCards();
+
+    if (showAlert && stats.fileCount > 0) {
+        await promptMissingMediaAlert(stats);
+    }
+
+    return stats;
+}
+
+let electronAPIForMissingAlert = null;
+let openRelinkMissingAudioModal = null;
+
+function configureMissingMediaAlerts(electronAPI, openRelinkModal) {
+    electronAPIForMissingAlert = electronAPI;
+    openRelinkMissingAudioModal = openRelinkModal;
+}
+
 function getAppConfigForWaveform() {
     return (uiCore && typeof uiCore.getCurrentAppConfig === 'function')
         ? uiCore.getCurrentAppConfig()
@@ -58,6 +176,7 @@ function getAppConfigForWaveform() {
 let isInitialized = false;
 let cueStore, audioController, dragDrop, uiCore; // Scoped module refs
 let cueButtonMap = {}; // To store references to cue button DOM elements
+let missingCueIds = new Set();
 let cueMeterElements = {}; // Stores meter DOM refs per cue
 let cueMeterLevels = {}; // Stores smoothed meter height ratio per cue
 const cueMeterPeakHoldUntil = {}; // Peak-hold expiry (ms) when level >= 0 dBFS
@@ -181,6 +300,11 @@ function refreshCueCardAppearance(cueId, color) {
     const button = document.getElementById(`cue-btn-${cueId}`);
     if (button) {
         applyCueButtonColor(button, resolvedColor);
+        applyMissingMediaVisual(button);
+    }
+    const editCard = document.querySelector(`.cue-edit-card[data-cue-id="${cueId}"]`);
+    if (editCard) {
+        applyMissingMediaVisual(editCard);
     }
 }
 
@@ -390,6 +514,7 @@ function appendEditModeCueCard(cue, cueWrapper) {
     card.addEventListener('pointerdown', (event) => suspendWrapperDragForSelectionModifier(event, cueWrapper));
 
     cueWrapper.appendChild(card);
+    applyMissingMediaVisual(card);
 }
 
 function handleEditCueCardSelectionClick(event, cue) {
@@ -811,6 +936,9 @@ function renderCues() {
         button.dataset.cueId = cue.id;
         button.dataset.cueType = cue.type || 'single';
         applyCueButtonColor(button, cue.buttonColor);
+        if (isCueMediaMissing(cue.id)) {
+            button.classList.add('cue-missing-media');
+        }
 
         const statusIndicator = document.createElement('div');
         statusIndicator.className = 'cue-status-indicator';
@@ -879,6 +1007,7 @@ function renderCues() {
         }
 
         interactiveContainer.appendChild(button);
+        applyMissingMediaVisual(button);
 
         const previewWrap = document.createElement('div');
         previewWrap.className = 'cue-preview-btn-wrap';
@@ -1696,5 +1825,9 @@ export {
     refreshAllCueBadges,
     getSelectedCueIds,
     getPrimarySelectedCueId,
-    refreshCueCardAppearance
+    refreshCueCardAppearance,
+    refreshMissingMediaState,
+    ensureMissingMediaState,
+    promptMissingMediaAlert,
+    configureMissingMediaAlerts
 };

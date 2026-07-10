@@ -353,6 +353,48 @@
             min-height: 0;
             touch-action: pan-y;
         }
+        .cue-button-remote.cue-missing-media,
+        .cue-edit-card.cue-missing-media {
+            outline: 2px dashed #ff6b6b;
+            outline-offset: -2px;
+        }
+        .cue-button-remote.cue-missing-media::after,
+        .cue-edit-card.cue-missing-media::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: repeating-linear-gradient(
+                -45deg,
+                transparent,
+                transparent 7px,
+                rgba(0, 0, 0, 0.22) 7px,
+                rgba(0, 0, 0, 0.22) 14px
+            );
+            pointer-events: none;
+            border-radius: inherit;
+            z-index: 1;
+        }
+        .cue-missing-media-badge {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            z-index: 4;
+            background: #c0392b;
+            color: #fff;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 2px 5px;
+            border-radius: 3px;
+            pointer-events: none;
+            letter-spacing: 0.04em;
+            line-height: 1.2;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+        }
+        .readonly-path.readonly-path--missing {
+            color: #ff8a80;
+            border: 1px dashed #c0392b;
+            background: rgba(192, 57, 43, 0.12);
+        }
         .cue-button-remote:hover:not(.playing):not(.paused):not(.cued) {
             filter: brightness(1.08);
             border-color: #666666;
@@ -2240,6 +2282,25 @@
             ws.send(JSON.stringify({ action, ...payload }));
         }
 
+        function applyRemoteMissingMediaVisual(element, cue) {
+            if (!element) return;
+            const isMissing = !!cue?.mediaMissing;
+            element.classList.toggle('cue-missing-media', isMissing);
+            let badge = element.querySelector('.cue-missing-media-badge');
+            if (isMissing) {
+                if (!badge) {
+                    badge = document.createElement('div');
+                    badge.className = 'cue-missing-media-badge';
+                    badge.textContent = 'MISSING';
+                    badge.title = 'Audio file not found on disk';
+                    badge.setAttribute('aria-label', 'Audio file missing');
+                    element.appendChild(badge);
+                }
+            } else if (badge) {
+                badge.remove();
+            }
+        }
+
         function refreshRemoteCueIndicators(cue) {
             if (!cue?.id || !window.RemoteBadgeUtils) return;
             const card = cueGridRemote.querySelector(`.cue-edit-card[data-cue-id="${cue.id}"]`);
@@ -2247,9 +2308,11 @@
             if (card) {
                 RemoteBadgeUtils.updateCueIndicatorStrip(card, cue, appConfigRemote);
                 updateEditCardLoopButton(card.querySelector('.cue-edit-loop-btn'), cue.loop);
+                applyRemoteMissingMediaVisual(card, cue);
             }
             if (button) {
                 RemoteBadgeUtils.updateCueIndicatorStrip(button, cue, appConfigRemote);
+                applyRemoteMissingMediaVisual(button, cue);
             }
         }
 
@@ -2485,7 +2548,12 @@
                 fileGroup.classList.remove('hidden');
                 playlistGroup.classList.add('hidden');
                 playlistOpts.classList.add('hidden');
-                document.getElementById('cuePropFilePath').textContent = detail.filePath || '(no file)';
+                const filePathEl = document.getElementById('cuePropFilePath');
+                filePathEl.textContent = detail.filePath || '(no file)';
+                filePathEl.classList.toggle('readonly-path--missing', !!detail.mediaMissing);
+                filePathEl.title = detail.mediaMissing
+                    ? 'Audio file not found on disk'
+                    : (detail.filePath || '');
             }
             const volPct = Math.round((detail.volume !== undefined ? detail.volume : 1) * 100);
             document.getElementById('cuePropVolume').value = volPct;
@@ -3022,6 +3090,15 @@
                             renderAllCuesRemote([]);
                         }
                     }
+                } else if (message.type === 'missing_media_state') {
+                    const missingIds = new Set(message.payload?.missingCueIds || []);
+                    Object.keys(currentCues).forEach((cueId) => {
+                        currentCues[cueId] = {
+                            ...currentCues[cueId],
+                            mediaMissing: missingIds.has(cueId)
+                        };
+                        refreshRemoteCueIndicators(currentCues[cueId]);
+                    });
                 } else if (message.type === 'config_snapshot') {
                     if (message.payload) {
                         appConfigRemote = { ...appConfigRemote, ...message.payload };
@@ -4711,6 +4788,7 @@
                 updateButtonStatusClass(button, cue.status, cue);
                 ensureWaveformForButton(button, cue);
                 RemoteBadgeUtils.updateCueIndicatorStrip(button, cue, appConfigRemote);
+                applyRemoteMissingMediaVisual(button, cue);
                 button.addEventListener('click', (event) => {
                     if (event.target.closest('.cue-preview-btn')) return;
                     triggerCueRemote(cue.id);
@@ -4836,6 +4914,7 @@
                 `;
                 applyEditCardAppearance(card, cue);
                 RemoteBadgeUtils.updateCueIndicatorStrip(card, cue, appConfigRemote);
+                applyRemoteMissingMediaVisual(card, cue);
                 const swatchContainer = card.querySelector('.cue-edit-color-swatches');
                 buildCardColorSwatches(swatchContainer, cue.id, cue.buttonColor);
                 const nameInput = card.querySelector('.cue-edit-name');
@@ -5260,10 +5339,12 @@
                 updateButtonStatusClass(button, cue.status, cue);
                 ensureWaveformForButton(button, cue);
                 RemoteBadgeUtils.updateCueIndicatorStrip(button, cue, appConfigRemote);
+                applyRemoteMissingMediaVisual(button, cue);
             }
             const editCard = cueGridRemote.querySelector(`.cue-edit-card[data-cue-id="${cue.id}"]`);
             if (editCard) {
                 RemoteBadgeUtils.updateCueIndicatorStrip(editCard, cue, appConfigRemote);
+                applyRemoteMissingMediaVisual(editCard, cue);
             }
             updateRemoteCueMeter(cue);
             handleRemoteWaveformUpdate(cue);

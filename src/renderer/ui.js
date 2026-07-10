@@ -8,6 +8,7 @@ import * as configSidebar from './ui/configSidebar.js';
 import * as sidebars from './ui/sidebars.js'; // Import sidebars module for config sidebar toggle
 import * as propertiesSidebar from './ui/propertiesSidebar.js';
 import * as modals from './ui/modals.js';
+import * as relinkMissingAudioUI from './ui/relinkMissingAudioUI.js';
 import * as appConfigUI from './ui/appConfigUI.js'; // Import new module
 import * as waveformControls from './ui/waveformControls.js'; // Ensure this is imported if used by init
 import * as mainWaveformPanel from './ui/mainWaveformPanel.js';
@@ -26,6 +27,8 @@ let waveformControlsModule;
 let mainWaveformPanelModule;
 let isUIModuleFullyInitialized = false; // NEW FLAG
 let lastKnownDefaultShowButtonWaveform = null;
+let missingMediaPollTimer = null;
+const MISSING_MEDIA_POLL_MS = 30000;
 
 // Core DOM Elements (not managed by sub-modules yet)
 let appContainer;
@@ -148,6 +151,13 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
 
     propertiesSidebar.initPropertiesSidebar(cueStoreModule, audioControllerModule, actualIpcBindingsModule, uiCoreInterface);
     modalsModule.initModals(cueStoreModule, electronAPIForPreload, uiCoreInterface, waveformControlsModule);
+    relinkMissingAudioUI.init(electronAPIForPreload);
+    if (cueGrid && typeof cueGrid.configureMissingMediaAlerts === 'function') {
+        cueGrid.configureMissingMediaAlerts(
+            electronAPIForPreload,
+            () => relinkMissingAudioUI.openModal()
+        );
+    }
 
     mainWaveformPanelModule.init({
         getAppConfig: () => appConfigUIModuleInternal?.getCurrentAppConfig?.() || {},
@@ -191,7 +201,22 @@ async function init(rcvdCueStore, rcvdAudioController, rcvdElectronAPI, rcvdDrag
 
     isUIModuleFullyInitialized = true; // SET FLAG HERE
     console.log('UI Core: isUIModuleFullyInitialized set to true.');
+    startMissingMediaPolling();
     return initializedModules;
+}
+
+function startMissingMediaPolling() {
+    if (missingMediaPollTimer) {
+        clearInterval(missingMediaPollTimer);
+    }
+    missingMediaPollTimer = setInterval(async () => {
+        if (!isUIModuleFullyInitialized || !cueGrid?.refreshMissingMediaState) return;
+        try {
+            await cueGrid.refreshMissingMediaState({ showAlert: false, rescan: true });
+        } catch (error) {
+            console.warn('UI Core: periodic missing media poll failed:', error);
+        }
+    }, MISSING_MEDIA_POLL_MS);
 }
 
 function cacheCoreDOMElements() {
@@ -363,10 +388,21 @@ async function loadAndRenderCues() {
     }
 
     updateModeUI(); // Ensure mode is set before rendering grid
-    
-    if (cueGrid && typeof cueGrid.renderCues === 'function') {
+
+    if (cueGrid && typeof cueGrid.ensureMissingMediaState === 'function') {
+        const missingStats = await cueGrid.ensureMissingMediaState();
+        if (cueGrid && typeof cueGrid.renderCues === 'function') {
+            console.log('UI Core: Calling cueGrid.renderCues() after loading cues and updating mode.');
+            cueGrid.renderCues();
+        } else {
+            console.error('UI Core (loadAndRenderCues): cueGrid.renderCues is not available!');
+        }
+        if (missingStats?.fileCount > 0 && cueGrid.promptMissingMediaAlert) {
+            await cueGrid.promptMissingMediaAlert(missingStats);
+        }
+    } else if (cueGrid && typeof cueGrid.renderCues === 'function') {
         console.log('UI Core: Calling cueGrid.renderCues() after loading cues and updating mode.');
-        cueGrid.renderCues(); // Explicitly call renderCues here
+        cueGrid.renderCues();
     } else {
         console.error('UI Core (loadAndRenderCues): cueGrid.renderCues is not available!');
     }

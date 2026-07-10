@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, Menu, dialog, nativeTheme, session } = requ
 const path = require('node:path');
 const fs = require('fs-extra'); // For file system operations
 const logger = require('./src/main/utils/logger');
+const autoUpdaterService = require('./src/main/autoUpdaterService');
 
 // Import main process modules
 logger.info('MAIN_JS: Importing cueManager...');
@@ -142,6 +143,8 @@ async function createWindow() {
     const menu = Menu.buildFromTemplate(getMenuTemplate(mainWindow, cueManager, workspaceManager, appConfigManager));
     Menu.setApplicationMenu(menu);
 
+    autoUpdaterService.initialize(mainWindow);
+
 
     // The theme should be applied based on the config potentially updated by workspaceManager.initialize
     const finalConfigForTheme = appConfigManager.getConfig();
@@ -228,6 +231,14 @@ function getMenuTemplate(mainWindow, cueManager, workspaceManager, appConfigMana
           label: 'Save Workspace As...',
           accelerator: 'CmdOrCtrl+Shift+S',
           click: () => workspaceManager.saveWorkspaceAs()
+        },
+        {
+          label: 'Relink Missing Audio...',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+              mainWindow.webContents.send('open-relink-missing-audio');
+            }
+          }
         },
         {
           label: 'Reveal Cues File',
@@ -329,129 +340,7 @@ function getMenuTemplate(mainWindow, cueManager, workspaceManager, appConfigMana
         },
         {
           label: 'Check for Updates...',
-          click: async () => {
-            try {
-              const { ipcMain } = require('electron');
-              const https = require('https');
-              const packageJson = require('./package.json');
-              const currentVersion = packageJson.version;
-
-              const checkUpdate = () => {
-                return new Promise((resolve) => {
-                  const options = {
-                    hostname: 'api.github.com',
-                    path: '/repos/mko1989/acCompaniment/releases/latest',
-                    method: 'GET',
-                    headers: {
-                      'User-Agent': 'acCompaniment'
-                    }
-                  };
-
-                  const req = https.request(options, (res) => {
-                    let data = '';
-                    res.on('data', (chunk) => {
-                      data += chunk;
-                    });
-                    res.on('end', () => {
-                      try {
-                        const release = JSON.parse(data);
-                        const latestVersion = release.tag_name.replace(/^v/, '');
-                        const parts1 = latestVersion.split('.').map(Number);
-                        const parts2 = currentVersion.split('.').map(Number);
-                        const maxLength = Math.max(parts1.length, parts2.length);
-                        let updateAvailable = false;
-                        for (let i = 0; i < maxLength; i++) {
-                          const part1 = parts1[i] || 0;
-                          const part2 = parts2[i] || 0;
-                          if (part1 > part2) {
-                            updateAvailable = true;
-                            break;
-                          }
-                          if (part1 < part2) break;
-                        }
-                        resolve({
-                          currentVersion,
-                          latestVersion,
-                          updateAvailable,
-                          releaseUrl: release.html_url
-                        });
-                      } catch (error) {
-                        resolve({
-                          currentVersion,
-                          latestVersion: null,
-                          updateAvailable: false,
-                          error: 'Failed to parse release data'
-                        });
-                      }
-                    });
-                  });
-
-                  req.on('error', () => {
-                    resolve({
-                      currentVersion,
-                      latestVersion: null,
-                      updateAvailable: false,
-                      error: 'Network error'
-                    });
-                  });
-
-                  req.setTimeout(5000, () => {
-                    req.destroy();
-                    resolve({
-                      currentVersion,
-                      latestVersion: null,
-                      updateAvailable: false,
-                      error: 'Timeout'
-                    });
-                  });
-
-                  req.end();
-                });
-              };
-
-              const updateInfo = await checkUpdate();
-              if (updateInfo.updateAvailable) {
-                const { dialog } = require('electron');
-                const result = await dialog.showMessageBox(mainWindow, {
-                  type: 'info',
-                  title: 'Update Available',
-                  message: `A new version is available!`,
-                  detail: `Current version: ${updateInfo.currentVersion}\nLatest version: ${updateInfo.latestVersion}\n\nWould you like to visit the releases page?`,
-                  buttons: ['Visit Releases', 'Cancel'],
-                  defaultId: 0
-                });
-                if (result.response === 0) {
-                  const { shell } = require('electron');
-                  await shell.openExternal('https://github.com/mko1989/acCompaniment/releases');
-                }
-              } else if (updateInfo.error) {
-                const { dialog } = require('electron');
-                await dialog.showMessageBox(mainWindow, {
-                  type: 'warning',
-                  title: 'Update Check Failed',
-                  message: `Could not check for updates: ${updateInfo.error}`,
-                  detail: `Current version: ${updateInfo.currentVersion}`
-                });
-              } else {
-                const { dialog } = require('electron');
-                await dialog.showMessageBox(mainWindow, {
-                  type: 'info',
-                  title: 'Up to Date',
-                  message: `You are running the latest version.`,
-                  detail: `Version: ${updateInfo.currentVersion}`
-                });
-              }
-            } catch (error) {
-              logger.error('Error checking for updates:', error);
-              const { dialog } = require('electron');
-              await dialog.showMessageBox(mainWindow, {
-                type: 'error',
-                title: 'Error',
-                message: 'Failed to check for updates',
-                detail: error.message
-              });
-            }
-          }
+          click: () => autoUpdaterService.checkForUpdates({ manual: true })
         },
         {
           type: 'separator'
@@ -460,7 +349,7 @@ function getMenuTemplate(mainWindow, cueManager, workspaceManager, appConfigMana
           label: 'Learn More',
           click: async () => {
             const { shell } = require('electron');
-            await shell.openExternal('https://github.com/mko1989/acCompaniment');
+            await shell.openExternal('https://github.com/alanimedia/acCompanimentAlt');
           }
         }
       ]

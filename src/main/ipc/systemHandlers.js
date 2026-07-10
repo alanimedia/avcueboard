@@ -1,22 +1,7 @@
-const { clipboard, app, nativeTheme, dialog } = require('electron');
+const { dialog, app, nativeTheme } = require('electron');
 const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
-const https = require('https');
-
-// Helper function to compare version strings
-function compareVersions(v1, v2) {
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
-    const maxLength = Math.max(parts1.length, parts2.length);
-
-    for (let i = 0; i < maxLength; i++) {
-        const part1 = parts1[i] || 0;
-        const part2 = parts2[i] || 0;
-        if (part1 > part2) return 1;
-        if (part1 < part2) return -1;
-    }
-    return 0;
-}
+const { checkForUpdates, showUpdateCheckDialog } = require('../utils/updateCheckUtils');
 
 function handleThemeChange(theme, win, nativeTheme, appConfigManager) {
     if (theme === 'dark') {
@@ -89,81 +74,11 @@ function registerSystemHandlers(ipcMain, { appConfigManager, mainWindow, openEas
         return packageJson.version;
     });
 
-    ipcMain.handle('check-for-update', async (event) => {
-        try {
-            const packageJson = require('../../../package.json');
-            const currentVersion = packageJson.version;
+    ipcMain.handle('check-for-update', async () => checkForUpdates());
 
-            return new Promise((resolve) => {
-                const options = {
-                    hostname: 'api.github.com',
-                    path: '/repos/mko1989/acCompaniment/releases/latest',
-                    method: 'GET',
-                    headers: {
-                        'User-Agent': 'acCompaniment'
-                    }
-                };
-
-                const req = https.request(options, (res) => {
-                    let data = '';
-                    res.on('data', (chunk) => {
-                        data += chunk;
-                    });
-                    res.on('end', () => {
-                        try {
-                            const release = JSON.parse(data);
-                            const latestVersion = release.tag_name.replace(/^v/, '');
-                            const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
-                            resolve({
-                                currentVersion,
-                                latestVersion,
-                                updateAvailable,
-                                releaseUrl: release.html_url
-                            });
-                        } catch (error) {
-                            logger.error('Error parsing GitHub release data:', error);
-                            resolve({
-                                currentVersion,
-                                latestVersion: null,
-                                updateAvailable: false,
-                                error: 'Failed to check for updates'
-                            });
-                        }
-                    });
-                });
-
-                req.on('error', (error) => {
-                    logger.error('Error checking for updates:', error);
-                    resolve({
-                        currentVersion,
-                        latestVersion: null,
-                        updateAvailable: false,
-                        error: 'Network error'
-                    });
-                });
-
-                req.setTimeout(5000, () => {
-                    req.destroy();
-                    resolve({
-                        currentVersion,
-                        latestVersion: null,
-                        updateAvailable: false,
-                        error: 'Timeout'
-                    });
-                });
-
-                req.end();
-            });
-        } catch (error) {
-            logger.error('Error checking for updates:', error);
-            const packageJson = require('../../../package.json');
-            return {
-                currentVersion: packageJson.version,
-                latestVersion: null,
-                updateAvailable: false,
-                error: error.message
-            };
-        }
+    ipcMain.handle('show-update-check-dialog', async () => {
+        await showUpdateCheckDialog(mainWindow);
+        return { success: true };
     });
 
     ipcMain.on('set-theme', (event, theme) => {
@@ -200,6 +115,24 @@ function registerSystemHandlers(ipcMain, { appConfigManager, mainWindow, openEas
             return { canceled: true, filePath: undefined };
         }
         return dialog.showSaveDialog(win, options);
+    });
+
+    ipcMain.handle('show-confirmation-dialog', async (event, options = {}) => {
+        const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+        if (!win) {
+            return { response: options.cancelId ?? 1, checkboxChecked: false };
+        }
+        const result = await dialog.showMessageBox(win, {
+            type: options.type || 'warning',
+            title: options.title || 'Confirm',
+            message: options.message || '',
+            detail: options.detail || '',
+            buttons: options.buttons || ['OK', 'Cancel'],
+            defaultId: options.defaultId ?? 0,
+            cancelId: options.cancelId ?? 1,
+            noLink: true
+        });
+        return { response: result.response, checkboxChecked: result.checkboxChecked };
     });
 }
 

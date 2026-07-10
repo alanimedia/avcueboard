@@ -1,6 +1,6 @@
 {
   "name": "accompaniment",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "A soundboard app",
   "main": "main.js",
   "scripts": {
@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "audio-decode": "^2.2.3",
+    "electron-updater": "^6.8.9",
     "express": "^5.1.0",
     "fs-extra": "^11.2.0",
     "howler": "^2.2.4",
@@ -86,7 +87,14 @@
           ]
         }
       ],
-      "icon": "assets/icons/icon.ico"
+      "icon": "assets/icons/icon.ico",
+      "publisherName": "acCompaniment"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true
     },
     "linux": {
       "category": "AudioVideo",

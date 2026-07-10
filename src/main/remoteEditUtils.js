@@ -221,8 +221,9 @@ function reorderCuesByIds(cues, cueIds) {
     return reordered;
 }
 
-function processCueDetailForRemote(cue, appConfig = {}) {
+function processCueDetailForRemote(cue, appConfig = {}, workspaceDir = null) {
     if (!cue) return null;
+    const { collectMissingMedia } = require('./utils/audioRelinkUtils');
     const showButtonWaveform = normalizeShowButtonWaveformOverride(cue.showButtonWaveform);
     const showCueMeter = normalizeShowCueMeterOverride(cue.showCueMeter);
     let effectiveShow = showButtonWaveform;
@@ -265,7 +266,8 @@ function processCueDetailForRemote(cue, appConfig = {}) {
                 name: item.name,
                 filePath: item.filePath || item.path || null
             }))
-            : []
+            : [],
+        mediaMissing: collectMissingMedia([cue], workspaceDir).length > 0
     };
 }
 

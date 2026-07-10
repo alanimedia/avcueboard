@@ -10,6 +10,7 @@ import {
     renderRetriggerLegend
 } from '../retriggerBehaviorCatalog.js';
 import { refreshAllCueBadges } from './cueGrid.js';
+import * as relinkMissingAudioUI from './relinkMissingAudioUI.js';
 import {
     setMonitorOutputDeviceId,
     setRouteShowPlaybackToMonitor,
@@ -99,6 +100,7 @@ let configHttpRemoteLinksDiv;
 let configMainWaveformEnabledCheckbox;
 let configDefaultShowButtonWaveformCheckbox;
 let configDefaultShowCueMeterCheckbox;
+let configRelinkMissingAudioBtn;
 
 // Mixer Integration Elements
 // Mixer Integration removed
@@ -242,6 +244,7 @@ function cacheDOMElements() {
     configMainWaveformEnabledCheckbox = document.getElementById('configMainWaveformEnabled');
     configDefaultShowButtonWaveformCheckbox = document.getElementById('configDefaultShowButtonWaveform');
     configDefaultShowCueMeterCheckbox = document.getElementById('configDefaultShowCueMeter');
+    configRelinkMissingAudioBtn = document.getElementById('configRelinkMissingAudioBtn');
 
     // Mixer Integration removed
 
@@ -254,6 +257,11 @@ function bindEventListeners() {
     uiLog.debug('AppConfigUI (DEBUG): bindEventListeners CALLED.');
     if (saveAppConfigButton) saveAppConfigButton.addEventListener('click', handleSaveButtonClick);
     if (closeConfigSidebarButton) closeConfigSidebarButton.addEventListener('click', () => uiAPI.toggleSidebar('configSidebar', false));
+    if (configRelinkMissingAudioBtn) {
+        configRelinkMissingAudioBtn.addEventListener('click', () => {
+            relinkMissingAudioUI.openModal();
+        });
+    }
 
     if (configCuesFilePathInput) configCuesFilePathInput.addEventListener('change', handleAppConfigChange);
     if (configAutoLoadLastWorkspaceCheckbox) configAutoLoadLastWorkspaceCheckbox.addEventListener('change', handleAppConfigChange);

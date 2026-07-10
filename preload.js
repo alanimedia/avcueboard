@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'stop-cue-monitor-preview-from-main',
       'request-audio-devices-for-remote',
       'set-crossfade-from-main',
+      'open-relink-missing-audio',
       // Add other channels as needed
       'mixer-subscription-feedback',
       'playback-time-update-from-main',
@@ -126,6 +127,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveWorkspaceAsDialog: () => ipcRenderer.invoke('save-workspace-as-dialog'),
   getRecentWorkspaces: () => ipcRenderer.invoke('get-recent-workspaces'),
   clearRecentWorkspaces: () => ipcRenderer.invoke('clear-recent-workspaces'),
+  scanMissingMedia: () => ipcRenderer.invoke('scan-missing-media'),
+  pollMissingMedia: () => ipcRenderer.invoke('poll-missing-media'),
+  planRelinkFromFolder: (searchRoot) => ipcRenderer.invoke('plan-relink-from-folder', searchRoot),
+  applyRelinkMatches: (matches) => ipcRenderer.invoke('apply-relink-matches', matches),
   onWorkspaceChanged: (callback) => ipcRenderer.on('workspace-did-change', (_event, newPath, newName) => callback(newPath, newName)),
   onWorkspaceError: (callback) => ipcRenderer.on('workspace-error', (_event, errorMsg) => callback(errorMsg)),
   onWorkspaceSaved: (callback) => ipcRenderer.on('workspace-saved', (_event, name, path) => callback(name, path)),

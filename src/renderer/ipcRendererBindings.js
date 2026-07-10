@@ -220,6 +220,20 @@ async function resolveAudioPath(filePath) {
     return electronAPIInstance.invoke('resolve-audio-path', filePath);
 }
 
+async function scanMissingMedia() {
+    if (!electronAPIInstance) {
+        throw new Error('electronAPIInstance not available for scan-missing-media');
+    }
+    return electronAPIInstance.scanMissingMedia();
+}
+
+async function pollMissingMedia() {
+    if (!electronAPIInstance) {
+        throw new Error('electronAPIInstance not available for poll-missing-media');
+    }
+    return electronAPIInstance.pollMissingMedia();
+}
+
 // --- Listeners for Main Process Events ---
 function setupOtherListeners() {
     console.log('IPC Binding: setupOtherListeners() CALLED');
@@ -497,6 +511,8 @@ export {
     getOrGenerateWaveformPeaks,
     getMediaDuration,
     resolveAudioPath,
+    scanMissingMedia,
+    pollMissingMedia,
     setAudioOutputDevice,
     showMultipleFilesDropModalComplete,
     showOpenDialog,

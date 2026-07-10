@@ -158,10 +158,19 @@ function syncAudioFilePathDisplay(filePath) {
     }
 
     if (displayEl) {
+        displayEl.classList.remove('audio-file-path-display--missing');
         if (path) {
             displayEl.textContent = path;
             displayEl.title = path;
             displayEl.classList.remove('audio-file-path-display--empty');
+            if (window.electronAPI?.checkFileExists) {
+                window.electronAPI.checkFileExists(path).then((result) => {
+                    if (!result?.exists && displayEl.textContent === path) {
+                        displayEl.classList.add('audio-file-path-display--missing');
+                        displayEl.title = `File not found: ${path}`;
+                    }
+                }).catch(() => {});
+            }
         } else {
             displayEl.textContent = 'No file selected — drag a file or click Replace…';
             displayEl.title = 'No file selected';
