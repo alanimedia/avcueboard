@@ -14,21 +14,19 @@ Download the latest installer from [Releases](https://github.com/alanimedia/avcu
 
 ## Screenshots
 
-Add PNG files to [`docs/screenshots/`](docs/screenshots/) using the names below — then they appear here on GitHub:
+![Main workspace — Playback mode with cue grid and waveform panel](docs/screenshots/01-main-workspace.png)
 
-| File | Shot |
-|------|------|
-| `01-main-workspace.png` | Main window: cue grid, Playback/Edit, Master Vol / XFADE / WAVE / Stop |
-| `02-cue-properties.png` | Cue Properties (color, waveform trim, fades) |
-| `03-settings.png` | Settings with **Remote Control** / Access links visible |
-| `04-web-remote.png` | Web remote in a browser or on iPad |
+![Settings — dual audio outputs beside the live cue board](docs/screenshots/02-settings-overview.png)
 
-<!-- After the PNGs are in docs/screenshots/, these lines will show them:
-![Main workspace](docs/screenshots/01-main-workspace.png)
-![Cue properties](docs/screenshots/02-cue-properties.png)
-![Settings](docs/screenshots/03-settings.png)
-![Web remote](docs/screenshots/04-web-remote.png)
--->
+![Edit mode — color, volume, reorder, and loop controls on each cue](docs/screenshots/03-edit-mode.png)
+
+![Cue Properties — color, file path, waveform trim, and fades](docs/screenshots/04-cue-properties.png)
+
+![Waveform Editor — in/out trim with zoom and fine seek](docs/screenshots/05-waveform-editor.png)
+
+![Remote Control — enable HTTP remote and copy Access links](docs/screenshots/06-remote-control.png)
+
+More UI detail shots (cue defaults, retrigger legend, relink, etc.) live in [`docs/screenshots/`](docs/screenshots/).
 
 ## Web remote
 
@@ -37,10 +35,10 @@ AV Cueboard includes a built-in **HTTP remote** so you can trigger and edit cues
 ### How to open it
 
 1. In AV Cueboard, open **Settings** (gear on the left).
-2. Expand **Remote Control**.
+2. Expand **Remote Control** (see screenshot above).
 3. Ensure **Enable HTTP remote** is checked (on by default).
 4. Note the **Remote port** (default **3000**).
-5. Under **Access links**, copy a URL for this machine (LAN IP), e.g. `http://192.168.1.50:3000`.
+5. Under **Access links**, copy a URL for this machine (LAN IP or Tailscale), e.g. `http://192.168.1.50:3000`.
 6. Open that URL in Safari/Chrome on your tablet or phone (same Wi‑Fi / network as the show PC).
 
 Same-machine testing: `http://127.0.0.1:3000`

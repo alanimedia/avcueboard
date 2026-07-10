@@ -1,12 +1,21 @@
 # README screenshots
 
-Add these PNG files here (same filenames) so they show on the GitHub README:
+PNGs used on the GitHub README (and extras for docs):
 
-| File | What to capture |
-|------|-----------------|
-| `01-main-workspace.png` | Full main window: cue grid, Playback/Edit, Master Vol / VU / XFADE / WAVE / Stop |
-| `02-cue-properties.png` | Cue Properties sidebar open (color, waveform trim, fades) |
-| `03-settings.png` | Settings sidebar with Remote Control / Access links visible |
-| `04-web-remote.png` | Browser or iPad showing the web remote at `http://…:3000` |
+| File | Content |
+|------|---------|
+| `01-main-workspace.png` | Playback mode: cue grid, Master Vol / VU / XFADE / WAVE / Stop, waveform panel |
+| `02-settings-overview.png` | Settings open (Audio Outputs) beside the live board |
+| `03-edit-mode.png` | Edit mode cue cards (color, volume, reorder) |
+| `04-cue-properties.png` | Edit mode with Cue Properties sidebar |
+| `05-waveform-editor.png` | Expanded Waveform Editor window |
+| `06-remote-control.png` | Remote Control: Enable HTTP remote, port, Access links |
+| `07-cue-properties-detail.png` | Cue Properties lower section (fades, retrigger, ducking) |
+| `08-audio-outputs.png` | Audio Outputs close-up (main + monitor) |
+| `09-cue-defaults.png` | Cue Defaults (This Workspace) |
+| `10-retrigger-legend.png` | Retrigger behavior legend |
+| `11-playback-stop-all.png` | Playback & Stop All / crossfade time |
+| `12-display-waveforms.png` | Display & Waveforms toggles |
+| `13-relink-missing.png` | Relink Missing Audio |
 
-Tips: capture at ~1280–1600px wide, dark UI as shown in the app, crop window chrome if you want a cleaner look. Export PNG (not huge — aim under ~1–2 MB each).
+Optional later: a browser/iPad shot of the web remote at `http://…:3000` as `14-web-remote.png`.
