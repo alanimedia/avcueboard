@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.1
+
+### Changed
+- Electron playback header now matches the web remote layout: vertical master volume slider, vertical VU meter, and compact XFADE / WAVE / Stop controls sized for HD displays
+
 ## 1.9.0
 
 ### Added

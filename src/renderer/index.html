@@ -206,15 +206,16 @@
                             <button type="button" id="modeEditBtn" class="mode-btn mode-btn-active-edit" title="Edit mode — arrange and edit cues">Edit</button>
                         </div>
                         <div id="globalControls" class="global-controls">
-                            <div class="header-master-volume" id="headerMasterVolumeWrap" title="Main show output volume">
-                                <label for="headerMainOutputVolume" class="header-volume-label">Master</label>
-                                <input type="range" id="headerMainOutputVolume" min="0" max="100" step="1" value="100" class="header-volume-slider" aria-label="Master output volume">
-                                <span id="headerMainOutputVolumeValue" class="header-volume-value">100%</span>
-                            </div>
-                            <div class="header-master-meter" id="headerMasterMeterWrap" title="Main output level">
-                                <div class="header-output-vu" aria-hidden="true">
-                                    <div class="header-output-vu-zones"></div>
-                                    <div class="header-output-vu-mask" id="headerMainOutputMeter"></div>
+                            <div class="header-playback-strip" id="headerPlaybackStrip" title="Playback controls">
+                                <label for="headerMainOutputVolume" class="header-strip-micro-label header-volume-label" title="Master output volume"><span>Master</span><span>Vol</span></label>
+                                <input type="range" id="headerMainOutputVolume" class="header-volume-slider" min="0" max="100" step="1" orient="vertical" value="100" aria-label="Master output volume">
+                                <span id="headerMainOutputVolumeValue" class="header-volume-pct">100%</span>
+                                <span class="header-strip-micro-label header-strip-micro-label--meter header-meter-label" aria-hidden="true">VU</span>
+                                <div class="header-meter-vu-wrap" title="Main output level">
+                                    <div class="header-output-vu header-output-vu--vertical" aria-hidden="true">
+                                        <div class="header-output-vu-zones"></div>
+                                        <div class="header-output-vu-mask is-vertical" id="headerMainOutputMeter"></div>
+                                    </div>
                                 </div>
                                 <span id="headerMainOutputDbfs" class="header-output-dbfs">−∞</span>
                             </div>

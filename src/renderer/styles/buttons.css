@@ -44,8 +44,8 @@ button:active, .btn:active {
 /* Specific styles for Stop All and Mode Toggle buttons using their IDs directly for higher specificity if needed */
 #stopAllButton {
     padding: 0 !important; 
-    width: 50px !important; 
-    height: 60px !important;
+    width: var(--header-stop-h, 62px) !important; 
+    height: var(--header-stop-h, 62px) !important;
     background-color: var(--maroon-bg) !important;
     border: 1px solid #666 !important; 
     /* Ensure flex properties from .btn are maintained or re-declared if necessary for icon centering */
@@ -61,7 +61,7 @@ button:active, .btn:active {
 }
 #stopAllButton .btn-icon {
     width: 40px !important; 
-    height: 50px !important;
+    height: 40px !important;
     object-fit: contain !important;
     margin: 0 !important; /* Ensure no margin on icon itself */
 }

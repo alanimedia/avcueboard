@@ -370,7 +370,13 @@ function updateOutputMeterUI(levels) {
             monitorVuDisplayLevel = displayLevel;
         }
         const dimPct = (1 - displayLevel) * 100;
-        maskEl.style.width = `${dimPct}%`;
+        if (maskEl.classList.contains('is-vertical')) {
+            maskEl.style.width = '100%';
+            maskEl.style.height = `${dimPct}%`;
+        } else {
+            maskEl.style.height = '';
+            maskEl.style.width = `${dimPct}%`;
+        }
     };
     applyVuLevel(configMainOutputMeter, levels?.main, 'main', levels?.dbfs?.main);
     applyVuLevel(configMonitorOutputMeter, levels?.monitor, 'monitor', levels?.dbfs?.monitor);
