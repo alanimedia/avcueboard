@@ -2,7 +2,6 @@ const { ipcMain, session, app, dialog, shell, clipboard } = require('electron');
 const appConfigManager = require('./appConfig'); // Import the new app config manager
 const fsPromises = require('fs').promises; // Renamed from fs to fsPromises
 const fs = require('fs'); // Added for synchronous operations like existsSync
-const { Worker } = require('worker_threads');
 const nodePath = require('path'); // To distinguish from browser path module if any
 const workspaceManager = require('./workspaceManager');
 const cueManager = require('./cueManager');
@@ -10,6 +9,7 @@ const { resolveAudioFilePath, isLikelyIncompletePath } = require('./utils/audioP
 const { getAudioFileDuration: getAudioFileDurationUtil } = require('./utils/audioFileUtils');
 const { v4: uuidv4 } = require('uuid');
 const branding = require('../shared/branding');
+const { getWaveformPeaksForFile } = require('./waveformPeaksService');
 
 
 let appRef; // To store the app instance
@@ -428,162 +428,9 @@ function initialize(application, mainWin, cueMgrModule, appCfgManager, wsMgr, ws
         }
     });
 
-    // Helper function for waveform generation with retry logic
-    async function generateWaveformWithRetry(audioFilePath, retryCount = 0) {
-        const waveformJsonPath = audioFilePath + '.peaks.json';
-        const maxRetries = 2;
-        console.log(`IPC_HANDLER: 'generateWaveformWithRetry' for ${audioFilePath}, retry: ${retryCount}`);
-        
-        try {
-            await fsPromises.access(waveformJsonPath);
-            console.log(`IPC_HANDLER: Found existing waveform data at ${waveformJsonPath}`);
-            const jsonData = await fsPromises.readFile(waveformJsonPath, 'utf8');
-            const parsedData = JSON.parse(jsonData);
-            
-            // Validate the cached data
-            if (parsedData && (parsedData.peaks || parsedData.duration)) {
-                return {
-                    success: true,
-                    ...parsedData,
-                    cached: true
-                };
-            } else {
-                console.warn(`IPC_HANDLER: Cached waveform data is invalid, regenerating for ${audioFilePath}`);
-                // Remove invalid cache file
-                try {
-                    await fsPromises.unlink(waveformJsonPath);
-                } catch (unlinkError) {
-                    console.warn(`IPC_HANDLER: Could not remove invalid cache file: ${unlinkError.message}`);
-                }
-            }
-        } catch (error) {
-            console.log(`IPC_HANDLER: No existing waveform data found (or error accessing it), generating for ${audioFilePath}. Error: ${error.message}`);
-        }
-        
-        return new Promise((resolve, reject) => {
-            const worker = new Worker(nodePath.join(__dirname, 'waveform-generator.js'), {
-                workerData: { audioFilePath }
-            });
-            
-            // Set a timeout for the worker
-            const workerTimeout = setTimeout(() => {
-                console.warn(`IPC_HANDLER: Waveform generation timeout for ${audioFilePath}, terminating worker`);
-                worker.terminate();
-                if (retryCount < maxRetries) {
-                    console.log(`IPC_HANDLER: Retrying waveform generation for ${audioFilePath} (attempt ${retryCount + 1})`);
-                    // Retry with exponential backoff
-                    setTimeout(async () => {
-                        const retryResult = await generateWaveformWithRetry(audioFilePath, retryCount + 1);
-                        resolve(retryResult);
-                    }, Math.pow(2, retryCount) * 1000);
-                } else {
-                    resolve({
-                        success: false,
-                        peaks: null,
-                        duration: null,
-                        error: 'timeout',
-                        errorMessage: 'Waveform generation timed out after multiple attempts',
-                        retryCount: retryCount
-                    });
-                }
-            }, 30000); // 30 second timeout
-            
-            worker.on('message', async (workerResult) => {
-                clearTimeout(workerTimeout);
-                
-                if (workerResult.error) {
-                    console.warn(`IPC_HANDLER: Waveform generation FAILED for ${audioFilePath} (worker posted error): ${workerResult.error.message}`);
-                    
-                    if (retryCount < maxRetries) {
-                        console.log(`IPC_HANDLER: Retrying waveform generation for ${audioFilePath} (attempt ${retryCount + 1})`);
-                        setTimeout(async () => {
-                            const retryResult = await generateWaveformWithRetry(audioFilePath, retryCount + 1);
-                            resolve(retryResult);
-                        }, Math.pow(2, retryCount) * 1000);
-                    } else {
-                        resolve({
-                            success: false,
-                            peaks: null,
-                            duration: null,
-                            error: 'generation_failed',
-                            errorMessage: workerResult.error.message,
-                            retryCount: retryCount
-                        });
-                    }
-                    return;
-                }
-                
-                try {
-                    console.log(`IPC_HANDLER: Waveform data received from worker for ${audioFilePath}`);
-                    await fsPromises.writeFile(waveformJsonPath, JSON.stringify(workerResult), 'utf8');
-                    console.log(`IPC_HANDLER: Saved waveform data to ${waveformJsonPath}`);
-                    resolve({
-                        success: true,
-                        ...workerResult,
-                        cached: false
-                    });
-                } catch (saveError) {
-                    console.error(`IPC_HANDLER: Error saving waveform JSON for ${audioFilePath}:`, saveError);
-                    // Even if we can't save, return the generated data
-                    resolve({
-                        success: true,
-                        ...workerResult,
-                        cached: false,
-                        saveWarning: 'Could not save waveform cache: ' + saveError.message
-                    });
-                }
-            });
-            
-            worker.on('error', (workerError) => {
-                clearTimeout(workerTimeout);
-                console.error(`IPC_HANDLER: Waveform generation worker CRITICAL error event for ${audioFilePath}:`, workerError);
-                
-                if (retryCount < maxRetries) {
-                    console.log(`IPC_HANDLER: Retrying waveform generation for ${audioFilePath} (attempt ${retryCount + 1})`);
-                    setTimeout(async () => {
-                        const retryResult = await generateWaveformWithRetry(audioFilePath, retryCount + 1);
-                        resolve(retryResult);
-                    }, Math.pow(2, retryCount) * 1000);
-                } else {
-                    resolve({
-                        success: false,
-                        peaks: null,
-                        duration: null,
-                        error: 'worker_critical_error',
-                        errorMessage: workerError.message || 'Worker process failed critically or with an unhandled error.',
-                        retryCount: retryCount
-                    });
-                }
-            });
-            
-            worker.on('exit', (code) => {
-                clearTimeout(workerTimeout);
-                if (code !== 0) {
-                    console.error(`IPC_HANDLER: Waveform generation worker stopped with exit code ${code} for ${audioFilePath}`);
-                    if (retryCount < maxRetries) {
-                        console.log(`IPC_HANDLER: Retrying waveform generation for ${audioFilePath} (attempt ${retryCount + 1})`);
-                        setTimeout(async () => {
-                            const retryResult = await generateWaveformWithRetry(audioFilePath, retryCount + 1);
-                            resolve(retryResult);
-                        }, Math.pow(2, retryCount) * 1000);
-                    } else {
-                        resolve({
-                            success: false,
-                            peaks: null,
-                            duration: null,
-                            error: 'worker_exit_error',
-                            errorMessage: `Worker exited with code ${code}`,
-                            retryCount: retryCount
-                        });
-                    }
-                }
-            });
-        });
-    }
-
     ipcMain.handle('get-or-generate-waveform-peaks', async (event, audioFilePath) => {
         console.log(`IPC_HANDLER: 'get-or-generate-waveform-peaks' for ${audioFilePath}`);
-        return await generateWaveformWithRetry(audioFilePath);
+        return await getWaveformPeaksForFile(audioFilePath);
     });
 
     ipcMain.handle('get-media-duration', async (event, filePath) => {

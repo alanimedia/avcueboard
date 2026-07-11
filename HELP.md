@@ -2,7 +2,7 @@
 
 Live audio cue software for **Bitfocus Companion** and **Elgato Stream Deck**.
 
-> **AV Cueboard v1.10.2** · [Releases](https://github.com/alanimedia/avcueboard/releases) · [Companion module](https://github.com/bitfocus/companion-module-alanimedia-avcueboard)
+> **AV Cueboard v1.10.3** · [Releases](https://github.com/alanimedia/avcueboard/releases) · [Companion module](https://github.com/bitfocus/companion-module-alanimedia-avcueboard)
 
 ---
 
@@ -116,6 +116,7 @@ Select multiple cues to edit shared fields: **button color**, **loop**, **retrig
   - **Double-click** — reset zoom
   - **Drag** — seek; drag edge handles for in/out
 - During **playback**, drag the waveform playhead to **seek**; volume slider adjusts **live level**
+- Waveform peak data is cached under the app **user data** folder (`waveform-cache/`), not next to your audio files. On workspace load, existing `*.peaks.json` sidecars beside cue media are moved into that cache and removed when possible.
 
 ---
 

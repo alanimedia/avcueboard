@@ -20,6 +20,7 @@ const {
   findSectionIdForLayoutIndex
 } = require('./cueLayoutUtils');
 const appConfig = require('./appConfig');
+const { migrateSidecarPeaksForCues } = require('./waveformPeaksService');
 const {
   normalizeRetriggerBehaviorOverride,
   migrateCueRetriggerStorage
@@ -116,6 +117,14 @@ async function loadCuesFromFile() {
     sections = empty.sections;
     layout = empty.layout;
   }
+
+  // Move legacy *.peaks.json sidecars next to media into userData waveform-cache (non-blocking).
+  setImmediate(() => {
+    migrateSidecarPeaksForCues(cues).catch((err) => {
+      logger.warn('CueManager: waveform sidecar migration failed:', err?.message || err);
+    });
+  });
+
   return getWorkspaceSnapshot();
 }
 

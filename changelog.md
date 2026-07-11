@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.10.3
+
+### Changed
+- Waveform peak cache moves to app **user data** (`waveform-cache/`) instead of `*.peaks.json` sidecars next to audio files
+
+### Fixed
+- On workspace load, existing media-folder peak sidecars are migrated into userData and removed when possible
+
 ## 1.10.2
 
 ### Changed

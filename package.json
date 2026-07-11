@@ -1,6 +1,6 @@
 {
   "name": "avcueboard",
-  "version": "1.10.2",
+  "version": "1.10.3",
   "description": "Live audio cue playback for Bitfocus Companion and Stream Deck",
   "main": "main.js",
   "scripts": {
